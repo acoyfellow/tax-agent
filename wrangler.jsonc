@@ -12,6 +12,12 @@
   "vars": {
     "TAXBANDITS_ENV": "sandbox"
   }
+  // KV namespace for idempotency on POST /file.
+  // Create with: npx wrangler kv namespace create IDEMPOTENCY_KV
+  // Then uncomment and fill in the id:
+  // "kv_namespaces": [
+  //   { "binding": "IDEMPOTENCY_KV", "id": "YOUR_KV_NAMESPACE_ID" }
+  // ],
   // Secrets (set via wrangler secret put):
   // TAXBANDITS_CLIENT_ID
   // TAXBANDITS_CLIENT_SECRET

@@ -9,6 +9,7 @@ export interface Env {
   TAXBANDITS_USER_TOKEN: string;
   TAXBANDITS_ENV: 'sandbox' | 'production';
   TAX_AGENT_API_KEY?: string; // optional: if set, all mutating routes require Bearer auth
+  IDEMPOTENCY_KV?: KVNamespace; // optional: enables idempotency on POST /file
 }
 
 // ============================================================

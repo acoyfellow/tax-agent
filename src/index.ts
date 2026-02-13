@@ -190,8 +190,24 @@ app.post('/validate', async (c) => {
   }
 });
 
+/** Idempotency key TTL: 24 hours (in seconds). */
+const IDEMPOTENCY_TTL = 86_400;
+
 /** POST /file — Validate → create 1099-NEC in TaxBandits. */
 app.post('/file', async (c) => {
+  // Idempotency: if an Idempotency-Key header is provided and IDEMPOTENCY_KV is bound,
+  // return a cached response on retry instead of creating a duplicate filing.
+  const idempotencyKey = c.req.header('Idempotency-Key')?.trim() || null;
+  const kv = c.env.IDEMPOTENCY_KV;
+
+  if (idempotencyKey && kv) {
+    const cached = await kv.get(idempotencyKey, 'text');
+    if (cached) {
+      const parsed = JSON.parse(cached) as { status: number; body: unknown };
+      return c.json(parsed.body, parsed.status as 200 | 422 | 502);
+    }
+  }
+
   const parsed = await parseBody(c);
   if (!parsed.success) {
     return c.json<ApiResponse<never>>(
@@ -215,10 +231,22 @@ app.post('/file', async (c) => {
 
   try {
     const created = await create1099NEC(c.env, body);
-    return c.json<ApiResponse<{ validation: ValidationResult; filing: TaxBanditsCreateResponse }>>({
+    const responseBody: ApiResponse<{
+      validation: ValidationResult;
+      filing: TaxBanditsCreateResponse;
+    }> = {
       success: true,
       data: { validation, filing: created },
-    });
+    };
+
+    // Cache successful filing response for idempotency
+    if (idempotencyKey && kv) {
+      await kv.put(idempotencyKey, JSON.stringify({ status: 200, body: responseBody }), {
+        expirationTtl: IDEMPOTENCY_TTL,
+      });
+    }
+
+    return c.json(responseBody);
   } catch (err) {
     return c.json<ApiResponse<{ validation: ValidationResult }>>(
       {
