@@ -67,6 +67,7 @@ curl -X POST https://tax-agent.coey.dev/api/auth/migrate \
 | 🏫 **[Tutorial: First Filing](docs/tutorial-first-filing.md)** | Step-by-step from zero to IRS submission |
 | 🛠️ **[How to: Authentication](docs/howto-authentication.md)** | Set up better-auth API keys or legacy Bearer |
 | 🛠️ **[How to: Webhooks](docs/howto-webhooks.md)** | Receive IRS status callbacks |
+| 🛠️ **[How to: QuickBooks](docs/howto-quickbooks.md)** | Connect QB, auto-generate 1099s |
 | 📖 **[API Reference](docs/reference-api.md)** | Complete endpoint docs, request/response schemas |
 | 📐 **[Architecture](docs/explanation-architecture.md)** | Effect pipeline, bindings, auth flow, why TaxBandits |
 | 🛡️ **[Security](docs/explanation-security.md)** | Prompt injection defenses, PII masking |
@@ -88,6 +89,8 @@ curl -X POST https://tax-agent.coey.dev/api/auth/migrate \
 | `POST` | `/webhook/status` | HMAC | TaxBandits callback |
 | `GET` | `/webhook/submissions` | 🔑 `webhooks:read` | List submissions |
 | `POST` | `/api/auth/admin/create-key` | Bearer (admin) | Create API key with custom permissions |
+| `GET` | `/quickbooks/vendors` | 🔑 `filings:validate` | List 1099 vendors from QB |
+| `POST` | `/quickbooks/generate` | 🔑 `filings:create` | Generate 1099s from QB data |
 | `*` | `/api/auth/*` | Varies | Auth handler (signup, keys) |
 
 Auth: `x-api-key` header (better-auth) or `Authorization: Bearer` (legacy). [Details →](docs/howto-authentication.md)
@@ -110,7 +113,7 @@ src/
 docs/                     # Diátaxis-structured documentation
 ```
 
-**170 tests** · 4,253 LOC · strict TypeScript · zero `any` · 160KB gzipped
+**181 tests** · 4,253 LOC · strict TypeScript · zero `any` · 160KB gzipped
 
 Built on [Cloudflare Workers](https://developers.cloudflare.com/workers/) + [Workers AI](https://developers.cloudflare.com/workers-ai/) + [Hono](https://hono.dev) + [Effect](https://effect.website) + [better-auth](https://better-auth.com) + [TaxBandits](https://developer.taxbandits.com)
 
