@@ -117,6 +117,17 @@ JavaScript: `0.1 + 0.2 = 0.30000000000000004`. `nonemployee_compensation` is a f
 The AI does JSON classification — 70B is overkill. `@cf/meta/llama-3.1-8b-instruct-fast` would be 3-5x faster.
 **Fix:** Test with 8B model. If validation quality is comparable, switch. Keep 70B as a comment fallback.
 
+## DONE — Grok feedback (all 6 addressed)
+
+1. ✅ **Unit tests** — 42 for agent.ts, 37 for taxbandits.ts, 11 for pii.ts (real crypto, zero mocks)
+2. ✅ **Rate limiting** — 20 req/min per IP on POST endpoints (in-memory sliding window)
+3. ✅ **PII security** — scrubTINs() masks SSN/EIN in error logs and API responses
+4. ✅ **Batch filing** — POST /file/batch, up to 100 recipients per submission
+5. ✅ **OpenAPI spec** — GET /openapi.json, full schema for all endpoints
+6. ✅ **Prompt injection** — already done in M1 (sanitize, truncate, DATA delimiters)
+
+Total: 118 tests, 11 source files, all passing.
+
 ## Commit rules
 
 - `npx tsc --noEmit` MUST pass
