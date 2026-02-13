@@ -1,11 +1,11 @@
 # tax-agent
 
-AI tax form agent on Cloudflare Workers. Validates 1099-NEC data with Workers AI, files with the IRS via TaxBandits.
+AI tax form agent on Cloudflare Workers. Validates 1099-NEC data with Workers AI (Llama 3.1 8B), files with the IRS via TaxBandits.
 
 **Origin:** [Ben (@nurodev)](https://github.com/nurodev) asked _"But can it finally do my taxes for me?"_ — [@grok](https://x.com/grok) [drafted a spec](https://x.com/nurodev) — this repo makes it real.
 
 ```
-You ─POST─▶ Worker ─validate─▶ Workers AI (Llama 3.3 70B)
+You ─POST─▶ Worker ─validate─▶ Workers AI (Llama 3.1 8B)
                │                        │
                │◀── issues / ok ────────┘
                │
@@ -42,6 +42,7 @@ Deploy:
 npx wrangler secret put TAXBANDITS_CLIENT_ID
 npx wrangler secret put TAXBANDITS_CLIENT_SECRET
 npx wrangler secret put TAXBANDITS_USER_TOKEN
+npx wrangler secret put TAX_AGENT_API_KEY   # Bearer token for API auth
 npm run deploy
 ```
 
@@ -49,17 +50,20 @@ npm run deploy
 
 ```bash
 curl -s http://localhost:8787/validate \
+  -H 'Authorization: Bearer YOUR_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{
     "payer": {
       "name": "Acme Corp",
       "tin": "27-1234567",
+      "tin_type": "EIN",
       "address": "100 Main St",
       "city": "New York",
       "state": "NY",
       "zip_code": "10001",
       "phone": "2125551234",
-      "email": "payroll@acme.com"
+      "email": "payroll@acme.com",
+      "business_type": "LLC"
     },
     "recipient": {
       "first_name": "Jane",
@@ -78,7 +82,7 @@ curl -s http://localhost:8787/validate \
   }' | jq
 ```
 
-Validation runs in two passes: structural checks (TIN format, state codes, amounts) then Workers AI semantic review (withholding ratios, red flags, consistency).
+All request bodies are validated with [Zod](https://zod.dev) (64KB limit). Validation then runs in two passes: structural checks (TIN format, state codes, amounts) then Workers AI semantic review (withholding ratios, red flags, consistency). PII is masked before being sent to the AI (TINs show last 4 only).
 
 ## File with the IRS
 
@@ -97,16 +101,18 @@ curl -s http://localhost:8787/status/SUBMISSION_ID | jq
 
 The three-step flow (create → transmit → poll status) mirrors TaxBandits' own lifecycle. The form stays in `CREATED` until you explicitly transmit.
 
+**Idempotency:** `POST /file` accepts an `Idempotency-Key` header. If the same key is sent again within 24 hours, the cached response is returned instead of creating a duplicate filing.
+
 ## API reference
 
-| Method | Path                      | Description                                             |
-| ------ | ------------------------- | ------------------------------------------------------- |
-| `GET`  | `/`                       | API overview                                            |
-| `GET`  | `/health`                 | Workers AI + TaxBandits OAuth status                    |
-| `POST` | `/validate`               | Validate 1099-NEC (AI only, nothing sent to TaxBandits) |
-| `POST` | `/file`                   | Validate → create 1099-NEC in TaxBandits                |
-| `POST` | `/transmit/:submissionId` | Transmit to IRS                                         |
-| `GET`  | `/status/:submissionId`   | Poll filing status                                      |
+| Method | Path                      | Auth   | Description                                             |
+| ------ | ------------------------- | ------ | ------------------------------------------------------- |
+| `GET`  | `/`                       | No     | API overview                                            |
+| `GET`  | `/health`                 | No     | Workers AI + TaxBandits OAuth status                    |
+| `POST` | `/validate`               | Bearer | Validate 1099-NEC (AI only, nothing sent to TaxBandits) |
+| `POST` | `/file`                   | Bearer | Validate → create 1099-NEC in TaxBandits                |
+| `POST` | `/transmit/:submissionId` | Bearer | Transmit to IRS                                         |
+| `GET`  | `/status/:submissionId`   | Bearer | Poll filing status                                      |
 
 All responses: `{ success: boolean, data?, error?, details? }`
 
@@ -116,13 +122,14 @@ Amounts are in **dollars** (e.g., `5000.00`).
 
 ```
 src/
-├── index.ts        # Hono routes, middleware, error handling
+├── index.ts        # Hono routes, Zod schemas, auth middleware
+├── index.test.ts   # 28 integration tests (Vitest + Cloudflare pool)
 ├── agent.ts        # Structural + AI validation pipeline
-├── taxbandits.ts   # TaxBandits API client (JWS auth, CRUD)
+├── taxbandits.ts   # TaxBandits API client (JWS auth, token cache)
 └── types.ts        # All TypeScript types
 ```
 
-Four files. Built on [Cloudflare Workers](https://developers.cloudflare.com/workers/) + [Workers AI](https://developers.cloudflare.com/workers-ai/) + [Hono](https://hono.dev) + [TaxBandits](https://developer.taxbandits.com).
+Built on [Cloudflare Workers](https://developers.cloudflare.com/workers/) + [Workers AI](https://developers.cloudflare.com/workers-ai/) + [Hono](https://hono.dev) + [TaxBandits](https://developer.taxbandits.com).
 
 ## Why TaxBandits
 
