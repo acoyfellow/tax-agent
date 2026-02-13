@@ -128,6 +128,12 @@ Four files. Built on [Cloudflare Workers](https://developers.cloudflare.com/work
 
 TaxBandits is the only tax API with self-serve sandbox signup, a real IRS e-file pipeline, and support for 1099-NEC/MISC/K, W-2, W-9, and 20+ other forms. Column Tax handles personal 1040s but requires a sales call. Intuit has no TurboTax API. TaxBandits gave us working credentials in 2 minutes.
 
+## Known limitations
+
+- **Single recipient per request:** TaxBandits supports batch filing (multiple recipients per submission), but this API accepts only one recipient per `POST /file` request. To file for multiple recipients, make separate requests.
+- **US addresses only:** Both payer and recipient addresses are assumed to be US domestic. `IsForeignAddress` is hardcoded to `false`. Foreign addresses are not supported.
+- **Sandbox by default:** The TaxBandits integration defaults to sandbox mode (`TAXBANDITS_ENV=sandbox`). Set `TAXBANDITS_ENV=production` with valid production credentials for real IRS filings.
+
 ## Credits
 
 - **[Ben (@nurodev)](https://github.com/nurodev)** — sparked the idea
