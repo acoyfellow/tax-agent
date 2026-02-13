@@ -1,17 +1,22 @@
 # tax-agent
 
-AI tax form agent on Cloudflare Workers. Validates 1099-NEC data with Workers AI (Llama 3.1 8B), files with the IRS via TaxBandits.
+AI tax form agent on Cloudflare Workers. Validates 1099-NEC data with Workers AI (GLM-4.7-Flash), files with the IRS via TaxBandits.
 
 **Origin:** [Ben (@nurodev)](https://github.com/nurodev) asked _"But can it finally do my taxes for me?"_ — [@grok](https://x.com/grok) [drafted a spec](https://x.com/nurodev) — this repo makes it real.
 
 ```
-You ─POST─▶ Worker ─validate─▶ Workers AI (Llama 3.1 8B)
+User ─POST─▶ Worker ─validate─▶ Workers AI (GLM-4.7-Flash)
                │                        │
                │◀── issues / ok ────────┘
                │
                ├─create─▶ TaxBandits API ─▶ 1099-NEC created
                ├─transmit─▶ TaxBandits ─▶ Filed with IRS
-               └─status─▶ TaxBandits ─▶ TRANSMITTED / ACCEPTED
+               ├─status─▶ TaxBandits ─▶ TRANSMITTED / ACCEPTED
+               │
+               └─webhook◀── TaxBandits ─── IRS acknowledgment
+                    │
+                    ▼
+               Durable Object (SQLite) ─── persistent status
 ```
 
 ## Quick start
@@ -103,18 +108,81 @@ The three-step flow (create → transmit → poll status) mirrors TaxBandits' ow
 
 **Idempotency:** `POST /file` accepts an `Idempotency-Key` header. If the same key is sent again within 24 hours, the cached response is returned instead of creating a duplicate filing.
 
+## Webhooks
+
+TaxBandits pushes status updates (IRS accepted/rejected) via webhook. The worker verifies HMAC-SHA256 signatures and persists status in a Durable Object.
+
+**Setup:** Configure the webhook URL in the [TaxBandits Developer Console](https://sandbox.taxbandits.com) → Settings → Webhook Notifications → "E-file Status Change (Federal)" → set callback URL to `https://tax-agent.coey.dev/webhook/status`.
+
+**Query submission status:**
+
+```bash
+curl -s https://tax-agent.coey.dev/webhook/submissions \
+  -H "Authorization: Bearer $API_KEY" | jq .
+```
+
+## Audit logging
+
+Every request is logged to [Workers Analytics Engine](https://developers.cloudflare.com/analytics/analytics-engine/) for compliance. Logged fields:
+
+| Field         | Description            |
+| ------------- | ---------------------- |
+| IP            | Client IP (index)      |
+| Method        | HTTP method            |
+| Path          | Request path           |
+| Status        | Response status code   |
+| Response time | Milliseconds           |
+| User-Agent    | Truncated to 200 chars |
+
+Logs are fire-and-forget (never block responses) and queryable via the [SQL API](https://developers.cloudflare.com/analytics/analytics-engine/sql-api/):
+
+```bash
+curl -s "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/analytics_engine/sql" \
+  -H "Authorization: Bearer $CF_API_TOKEN" \
+  -d "SELECT blob2 AS path, COUNT() AS hits, AVG(double1) AS avg_ms FROM tax_agent_audit GROUP BY path ORDER BY hits DESC LIMIT 10"
+```
+
+## Architecture
+
+```
+User ─POST─▶ Worker ─validate─▶ Workers AI (GLM-4.7-Flash)
+               │                        │
+               │◀── issues / ok ────────┘
+               │
+               ├─create─▶ TaxBandits API ─▶ 1099-NEC created
+               ├─transmit─▶ TaxBandits ─▶ Filed with IRS
+               ├─status─▶ TaxBandits ─▶ TRANSMITTED / ACCEPTED
+               │
+               └─webhook◀── TaxBandits ─── IRS acknowledgment
+                    │
+                    ▼
+               Durable Object (SQLite) ─── persistent status
+```
+
+Built with [Effect](https://effect.website) for typed error handling, composable retry, and structured concurrency. All TaxBandits API calls use `Effect.retry` with exponential backoff + jitter — only transient errors (429, 5xx) are retried; auth errors fail immediately.
+
+Error types flow through the type system via `Data.TaggedError`:
+
+- `TaxBanditsAuthError` — bad credentials, no retry
+- `TaxBanditsTransientError` — network/server failure, auto-retry
+- `TaxBanditsBusinessError` — TaxBandits rejected the request
+- `AIValidationError` — Workers AI unavailable
+
 ## API reference
 
-| Method | Path                      | Auth   | Description                                             |
-| ------ | ------------------------- | ------ | ------------------------------------------------------- |
-| `GET`  | `/`                       | No     | API overview                                            |
-| `GET`  | `/health`                 | No     | Workers AI + TaxBandits OAuth status                    |
-| `POST` | `/validate`               | Bearer | Validate 1099-NEC (AI only, nothing sent to TaxBandits) |
-| `POST` | `/file`                   | Bearer | Validate → create 1099-NEC in TaxBandits                |
-| `POST` | `/file/batch`             | Bearer | Validate → create up to 100 1099-NECs in one submission |
-| `POST` | `/transmit/:submissionId` | Bearer | Transmit to IRS                                         |
-| `GET`  | `/status/:submissionId`   | Bearer | Poll filing status                                      |
-| `GET`  | `/openapi.json`           | No     | OpenAPI 3.1 specification                               |
+| Method | Path                       | Auth   | Description                                             |
+| ------ | -------------------------- | ------ | ------------------------------------------------------- |
+| `GET`  | `/`                        | No     | API overview                                            |
+| `GET`  | `/health`                  | No     | Workers AI + TaxBandits OAuth status                    |
+| `POST` | `/validate`                | Bearer | Validate 1099-NEC (AI only, nothing sent to TaxBandits) |
+| `POST` | `/file`                    | Bearer | Validate → create 1099-NEC in TaxBandits                |
+| `POST` | `/file/batch`              | Bearer | Validate → create up to 100 1099-NECs in one submission |
+| `POST` | `/transmit/:submissionId`  | Bearer | Transmit to IRS                                         |
+| `GET`  | `/status/:submissionId`    | Bearer | Poll filing status                                      |
+| `GET`  | `/openapi.json`            | No     | OpenAPI 3.1 specification                               |
+| `POST` | `/webhook/status`          | HMAC   | TaxBandits webhook callback (status updates)            |
+| `GET`  | `/webhook/submissions`     | Bearer | List tracked submissions                                |
+| `GET`  | `/webhook/submissions/:id` | Bearer | Get single submission status                            |
 
 All responses: `{ success: boolean, data?, error?, details? }`
 
@@ -124,18 +192,23 @@ Amounts are in **dollars** (e.g., `5000.00`). POST endpoints are rate-limited to
 
 ```
 src/
-├── index.ts           # Hono routes, Zod schemas, auth middleware
-├── index.test.ts      # 28 integration tests
-├── agent.ts           # Structural + AI validation pipeline
-├── agent.test.ts      # 42 unit tests (pure functions)
-├── taxbandits.ts      # TaxBandits API client (JWS auth, token cache)
-├── taxbandits.test.ts # 37 unit tests (crypto, request building)
-├── pii.ts             # TIN masking and scrubbing
-├── pii.test.ts        # 11 PII tests
-├── ratelimit.ts       # Cloudflare native rate limit binding (20 req/min, in-memory fallback)
-├── ratelimit.test.ts  # 10 rate limiter tests
-├── openapi.ts         # OpenAPI 3.1 spec
-└── types.ts           # All TypeScript types
+├── index.ts              # Hono routes, Zod schemas, auth middleware
+├── index.test.ts         # 28 integration tests
+├── agent.ts              # Structural + AI validation pipeline (Effect)
+├── agent.test.ts         # 42 unit tests (pure functions)
+├── taxbandits.ts         # TaxBandits API client (Effect, typed errors, auto-retry)
+├── taxbandits.test.ts    # 46 unit tests
+├── webhook.ts            # Webhook signature verification + payload parsing
+├── webhook-state.ts      # Durable Object — SQLite persistence for submissions
+├── webhook.test.ts       # 9 webhook tests
+├── audit.ts              # Analytics Engine audit logging middleware
+├── audit.test.ts         # 5 audit tests
+├── pii.ts                # TIN masking and scrubbing
+├── pii.test.ts           # 11 PII tests
+├── ratelimit.ts          # Cloudflare native rate limit binding
+├── ratelimit.test.ts     # 10 rate limiter tests
+├── openapi.ts            # OpenAPI 3.1 spec
+└── types.ts              # All TypeScript types + Effect error classes
 ```
 
 Built on [Cloudflare Workers](https://developers.cloudflare.com/workers/) + [Workers AI](https://developers.cloudflare.com/workers-ai/) + [Hono](https://hono.dev) + [TaxBandits](https://developer.taxbandits.com).
@@ -211,15 +284,15 @@ The model is instructed to treat everything inside `<DATA>` as data to review, n
 
 ### Defense layers
 
-| Layer | What it stops |
-|-------|---------------|
-| Zod schema validation | Malformed input never reaches the agent |
-| Field truncation (100-200 chars) | Mega-prompt payloads |
-| Angle bracket escaping | Tag breakout attempts |
-| `<DATA>` delimiters | Instruction/data confusion |
-| PII masking | TIN exfiltration via prompt |
-| Structural validator runs independently | AI manipulation can't override format checks |
-| AI issues are `warning`/`info` only | AI can never set `severity: error` — only structural checks can block filing |
+| Layer                                   | What it stops                                                                |
+| --------------------------------------- | ---------------------------------------------------------------------------- |
+| Zod schema validation                   | Malformed input never reaches the agent                                      |
+| Field truncation (100-200 chars)        | Mega-prompt payloads                                                         |
+| Angle bracket escaping                  | Tag breakout attempts                                                        |
+| `<DATA>` delimiters                     | Instruction/data confusion                                                   |
+| PII masking                             | TIN exfiltration via prompt                                                  |
+| Structural validator runs independently | AI manipulation can't override format checks                                 |
+| AI issues are `warning`/`info` only     | AI can never set `severity: error` — only structural checks can block filing |
 
 ## Known limitations
 
@@ -242,12 +315,12 @@ MIT
 
 All secrets are stored in Cloudflare Workers secrets (encrypted at rest, never in source). Rotate on this schedule:
 
-| Secret | Rotation | How |
-|--------|----------|-----|
-| `TAX_AGENT_API_KEY` | Every 90 days or on suspected compromise | `wrangler secret put TAX_AGENT_API_KEY` + update clients |
-| `TAXBANDITS_CLIENT_SECRET` | Per TaxBandits policy (annually) | Regenerate in TaxBandits dashboard → `wrangler secret put` |
-| `TAXBANDITS_USER_TOKEN` | Per TaxBandits policy | Regenerate in dashboard → `wrangler secret put` |
-| `CLOUDFLARE_API_TOKEN` | Every 90 days | Regenerate at dash.cloudflare.com → update GitHub secret |
+| Secret                     | Rotation                                 | How                                                        |
+| -------------------------- | ---------------------------------------- | ---------------------------------------------------------- |
+| `TAX_AGENT_API_KEY`        | Every 90 days or on suspected compromise | `wrangler secret put TAX_AGENT_API_KEY` + update clients   |
+| `TAXBANDITS_CLIENT_SECRET` | Per TaxBandits policy (annually)         | Regenerate in TaxBandits dashboard → `wrangler secret put` |
+| `TAXBANDITS_USER_TOKEN`    | Per TaxBandits policy                    | Regenerate in dashboard → `wrangler secret put`            |
+| `CLOUDFLARE_API_TOKEN`     | Every 90 days                            | Regenerate at dash.cloudflare.com → update GitHub secret   |
 
 **On compromise:** Rotate ALL secrets immediately. Revoke the old TaxBandits credentials in their dashboard. Check `/status` for any unexpected transmissions.
 

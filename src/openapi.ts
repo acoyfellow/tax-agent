@@ -528,5 +528,114 @@ export const openApiSpec: Record<string, unknown> = {
         },
       },
     },
+
+    // ------------------------------------------------ POST /webhook/status
+    '/webhook/status': {
+      post: {
+        summary: 'TaxBandits webhook callback',
+        description:
+          'Receives HMAC-SHA256 signed status updates from TaxBandits when the IRS accepts or rejects a filing.',
+        parameters: [
+          {
+            name: 'Signature',
+            in: 'header',
+            required: true,
+            schema: { type: 'string' },
+            description: 'HMAC-SHA256 signature',
+          },
+          {
+            name: 'TimeStamp',
+            in: 'header',
+            required: true,
+            schema: { type: 'string' },
+            description: 'Timestamp used in signature computation',
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  SubmissionId: { type: 'string', format: 'uuid' },
+                  FormType: { type: 'string', example: 'FORM1099NEC' },
+                  Records: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        RecordId: { type: 'string' },
+                        Status: { type: 'string', enum: ['Accepted', 'Rejected'] },
+                        StatusCode: { type: 'integer' },
+                        StatusTime: { type: 'string', format: 'date-time' },
+                        Errors: { type: 'array', items: { type: 'object' }, nullable: true },
+                      },
+                    },
+                  },
+                },
+                required: ['SubmissionId', 'FormType', 'Records'],
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Webhook received',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/SuccessResponse' },
+              },
+            },
+          },
+          '401': {
+            description: 'Invalid signature',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' },
+              },
+            },
+          },
+        },
+      },
+    },
+
+    // --------------------------------------------- GET /webhook/submissions
+    '/webhook/submissions': {
+      get: {
+        summary: 'List tracked submissions',
+        description: 'Returns all submissions tracked via webhook callbacks.',
+        security: [{ BearerAuth: [] }],
+        responses: {
+          '200': {
+            description: 'List of submissions',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean' },
+                    data: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          submissionId: { type: 'string' },
+                          status: { type: 'string' },
+                          formType: { type: 'string' },
+                          createdAt: { type: 'string' },
+                          updatedAt: { type: 'string' },
+                          records: { type: 'string' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
   },
 };
