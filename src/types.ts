@@ -145,6 +145,11 @@ export interface TaxBanditsCreateRequest {
       B4FedTaxWH?: string; // federal tax withheld as string
       Is2ndTINnot: boolean;
       IsDirectSales: boolean;
+      States?: Array<{
+        StateCd: string;
+        StateIncome?: string;
+        StateTaxWithheld?: string;
+      }>;
     };
   }>;
 }

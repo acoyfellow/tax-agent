@@ -202,6 +202,14 @@ function runStructuralValidations(data: Form1099NECRequest): ValidationIssue[] {
       severity: 'error',
     });
   }
+  if (data.is_state_filing && data.state_income == null) {
+    issues.push({
+      field: 'state_income',
+      message:
+        'State filing enabled but state_income not provided; will default to nonemployee_compensation',
+      severity: 'warning',
+    });
+  }
 
   // Tax year
   const currentYear = new Date().getFullYear();

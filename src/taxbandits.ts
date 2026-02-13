@@ -221,6 +221,17 @@ function buildCreateRequest(data: Form1099NECRequest): TaxBanditsCreateRequest {
             : undefined,
           Is2ndTINnot: false,
           IsDirectSales: false,
+          ...(data.is_state_filing && data.state
+            ? {
+                States: [
+                  {
+                    StateCd: data.state,
+                    StateIncome: (data.state_income ?? data.nonemployee_compensation).toFixed(2),
+                    StateTaxWithheld: (data.state_tax_withheld ?? 0).toFixed(2),
+                  },
+                ],
+              }
+            : {}),
         },
       },
     ],
