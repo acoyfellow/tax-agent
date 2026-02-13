@@ -22,6 +22,11 @@
       },
     },
   ],
+  "durable_objects": {
+    "bindings": [{ "name": "WEBHOOK_STATE", "class_name": "WebhookState" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WebhookState"] }],
+  "analytics_engine_datasets": [{ "binding": "AUDIT_LOG", "dataset": "tax_agent_audit" }],
   // Secrets (set via wrangler secret put):
   // TAXBANDITS_CLIENT_ID
   // TAXBANDITS_CLIENT_SECRET

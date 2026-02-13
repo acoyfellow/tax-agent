@@ -1,4 +1,5 @@
 import { Data } from 'effect';
+import type { WebhookState } from './webhook-state';
 
 // ============================================================
 // Cloudflare Worker Environment
@@ -13,6 +14,8 @@ export interface Env {
   TAX_AGENT_API_KEY?: string; // optional: if set, all mutating routes require Bearer auth
   IDEMPOTENCY_KV?: KVNamespace; // optional: enables idempotency on POST /file
   RATE_LIMITER?: RateLimit; // Cloudflare native rate limit binding
+  WEBHOOK_STATE?: DurableObjectNamespace<WebhookState>;
+  AUDIT_LOG?: AnalyticsEngineDataset;
 }
 
 // ============================================================

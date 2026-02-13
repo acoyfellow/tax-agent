@@ -25,6 +25,8 @@ import {
 } from './taxbandits';
 import { rateLimiter } from './ratelimit';
 import { scrubTINs } from './pii';
+import { auditLogger } from './audit';
+import { verifyWebhookSignature, parseWebhookPayload } from './webhook';
 
 // ---------------------------------------------------------------------------
 // Zod schemas — runtime validation for POST bodies
@@ -98,6 +100,7 @@ const app = new Hono<{ Bindings: Env }>();
 // Middleware
 // ---------------------------------------------------------------------------
 app.use('*', cors());
+app.use('*', auditLogger());
 app.use('*', bodyLimit({ maxSize: 64 * 1024 })); // 64 KB
 
 // Rate-limit POST endpoints (20 req/min per IP). GET routes are unlimited.
@@ -121,6 +124,14 @@ app.use('/transmit/*', async (c, next) => {
   return bearerAuth({ token: c.env.TAX_AGENT_API_KEY })(c, next);
 });
 app.use('/status/*', async (c, next) => {
+  if (!c.env.TAX_AGENT_API_KEY) return next();
+  return bearerAuth({ token: c.env.TAX_AGENT_API_KEY })(c, next);
+});
+app.use('/webhook/submissions', async (c, next) => {
+  if (!c.env.TAX_AGENT_API_KEY) return next();
+  return bearerAuth({ token: c.env.TAX_AGENT_API_KEY })(c, next);
+});
+app.use('/webhook/submissions/*', async (c, next) => {
   if (!c.env.TAX_AGENT_API_KEY) return next();
   return bearerAuth({ token: c.env.TAX_AGENT_API_KEY })(c, next);
 });
@@ -267,6 +278,14 @@ app.post('/file', async (c) => {
   }
 
   const filingProgram = create1099NEC(c.env, body).pipe(
+    Effect.tap((created) =>
+      Effect.promise(async () => {
+        if (c.env.WEBHOOK_STATE && created.SubmissionId) {
+          const stub = c.env.WEBHOOK_STATE.get(c.env.WEBHOOK_STATE.idFromName('global'));
+          await stub.trackSubmission(created.SubmissionId, 'FORM1099NEC');
+        }
+      }),
+    ),
     Effect.map((created) => {
       const responseBody: ApiResponse<{
         validation: ValidationResult;
@@ -342,6 +361,14 @@ app.post('/file/batch', async (c) => {
   }
 
   const filingProgram = createBatch1099NEC(c.env, forms).pipe(
+    Effect.tap((created) =>
+      Effect.promise(async () => {
+        if (c.env.WEBHOOK_STATE && created.SubmissionId) {
+          const stub = c.env.WEBHOOK_STATE.get(c.env.WEBHOOK_STATE.idFromName('global'));
+          await stub.trackSubmission(created.SubmissionId, 'FORM1099NEC');
+        }
+      }),
+    ),
     Effect.map((created) => ({
       status: 200 as const,
       body: {
@@ -430,6 +457,83 @@ app.get('/status/:submissionId', async (c) => {
 /** GET /openapi.json — OpenAPI 3.1 specification. */
 app.get('/openapi.json', (c) => c.json(openApiSpec));
 
+/** POST /webhook/status — TaxBandits e-file status webhook callback */
+app.post('/webhook/status', async (c) => {
+  const signature = c.req.header('Signature') ?? '';
+  const timestamp = c.req.header('TimeStamp') ?? '';
+
+  if (!signature || !timestamp) {
+    return c.json({ success: false, error: 'Missing Signature or TimeStamp header' }, 401);
+  }
+
+  const isValid = await Effect.runPromise(
+    verifyWebhookSignature(
+      c.env.TAXBANDITS_CLIENT_ID,
+      c.env.TAXBANDITS_CLIENT_SECRET,
+      signature,
+      timestamp,
+    ),
+  );
+
+  if (!isValid) {
+    return c.json({ success: false, error: 'Invalid webhook signature' }, 401);
+  }
+
+  const raw = await c.req.json().catch(() => null);
+  const payload = parseWebhookPayload(raw);
+  if (!payload) {
+    return c.json({ success: false, error: 'Invalid webhook payload' }, 400);
+  }
+
+  // Persist to Durable Object
+  if (c.env.WEBHOOK_STATE) {
+    const stub = c.env.WEBHOOK_STATE.get(c.env.WEBHOOK_STATE.idFromName('global'));
+    await stub.trackSubmission(payload.SubmissionId, payload.FormType);
+
+    // Determine overall status from records
+    const hasRejected = payload.Records.some((r) => r.Status === 'Rejected');
+    const allAccepted = payload.Records.every((r) => r.Status === 'Accepted');
+    const status = hasRejected ? 'REJECTED' : allAccepted ? 'ACCEPTED' : 'PARTIAL';
+
+    await stub.updateStatus(payload.SubmissionId, status, JSON.stringify(payload.Records));
+  }
+
+  // Audit log
+  if (c.env.AUDIT_LOG) {
+    c.env.AUDIT_LOG.writeDataPoint({
+      indexes: [payload.SubmissionId],
+      blobs: ['webhook', payload.FormType, payload.Records[0]?.Status ?? 'unknown'],
+      doubles: [payload.Records.length],
+    });
+  }
+
+  return c.json({ success: true });
+});
+
+/** GET /webhook/submissions — List tracked submissions */
+app.get('/webhook/submissions', async (c) => {
+  if (!c.env.WEBHOOK_STATE) {
+    return c.json({ success: false, error: 'Webhook state not configured' }, 503);
+  }
+  const stub = c.env.WEBHOOK_STATE.get(c.env.WEBHOOK_STATE.idFromName('global'));
+  const submissions = await stub.listSubmissions();
+  return c.json({ success: true, data: submissions });
+});
+
+/** GET /webhook/submissions/:submissionId — Get single submission status */
+app.get('/webhook/submissions/:submissionId', async (c) => {
+  if (!c.env.WEBHOOK_STATE) {
+    return c.json({ success: false, error: 'Webhook state not configured' }, 503);
+  }
+  const submissionId = c.req.param('submissionId');
+  const stub = c.env.WEBHOOK_STATE.get(c.env.WEBHOOK_STATE.idFromName('global'));
+  const submission = await stub.getSubmission(submissionId);
+  if (!submission) {
+    return c.json({ success: false, error: 'Submission not found' }, 404);
+  }
+  return c.json({ success: true, data: submission });
+});
+
 // ---------------------------------------------------------------------------
 // 404 / Error
 // ---------------------------------------------------------------------------
@@ -452,3 +556,5 @@ app.onError((err, c) => {
 });
 
 export default app;
+
+export { WebhookState } from './webhook-state';
