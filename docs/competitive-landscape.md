@@ -74,18 +74,28 @@ The open-source landscape for US 1099 e-filing is **empty**. No mature project e
 
 ## Open Source Landscape
 
-**Effectively empty.** GitHub search results:
-- "irs efile api" → **0 results**
-- "1099 api tax" → **1 result** (partial Go wrapper, 0 stars)
-- "1099-NEC" → 9 results, all 0-6 stars, none do e-filing
-- "tax filing agent" → AI chatbot demos, nothing production-grade
-- npm → Zero 1099-related packages
+There are OSS tax projects — but they're all in different categories. Nobody does what tax-agent does.
 
-**tax-agent is the only open-source project that:**
-1. Validates tax forms with AI
-2. Files with the IRS via a real e-file pipeline
-3. Provides a production API with auth, rate limiting, audit logging
-4. Runs on edge infrastructure (Cloudflare Workers)
+| Project | Stars | What it does | How it differs from tax-agent |
+|---|---|---|---|
+| **[UsTaxes](https://github.com/ustaxes/UsTaxes)** | 1,615 ⭐ | Consumer 1040 filing — React web app, client-side only, generates PDF | Personal taxes, not B2B information returns. No API, no e-file, no AI. AGPL. Dormant (last feature release 2023, recent commits are dependabot only). |
+| **[OpenFile](https://github.com/openfiletax/openfile)** | 180 ⭐ | Fork of IRS Direct File — Docker-based 1040 filing | Consumer 1040 fork. IRS Direct File itself is [indefinitely suspended](https://www.nextgov.com/digital-government/2025/11/direct-file-wont-happen-2026-irs-tells-states/409309/). No 1099 support, no API. |
+| **[fire-1099](https://github.com/sdj0/fire-1099)** | 57 ⭐ | Python CLI that generates IRS FIRE-format ASCII files for 1099-MISC/NEC | **Closest competitor.** But: CLI only (no API), generates raw FIRE files (you upload manually), no validation, no AI, no auth, no hosting. It's a formatter, not a filing agent. |
+| **[opentaxforms](https://github.com/jsaponara/opentaxforms)** | 45 ⭐ | Converts IRS PDF forms to HTML5 | PDF parser, not a filer. Author says "turn back, there be dragons." No e-file capability. |
+| **[tax-helper](https://github.com/hinosxz/tax-helper)** | 47 ⭐ | French/US equity tax calculator | Niche equity comp tool, not general filing. |
+| **[TaxGPT](https://github.com/pcraig3/taxgpt)** | 28 ⭐ | Canadian tax filing option finder (GPT-powered) | Canada-only, informational chatbot, doesn't file anything. |
+| **[TaxEase.AI](https://github.com/VishalTheHuman/TaxEase.AI-Vertex-AI-Agent)** | 13 ⭐ | Vertex AI agent for tax guidance | Demo/hackathon project. Explains taxes, doesn't file them. |
+| **[go-tax1099](https://github.com/Lendiom/go-tax1099)** | 0 ⭐ | Partial Go wrapper for Tax1099.com API | Incomplete wrapper for a paid service. |
+
+### The gap
+
+**Nobody in open source does all four:**
+1. ✅ Validates tax forms with AI
+2. ✅ Files with the IRS via a real e-file pipeline
+3. ✅ Provides a production API with auth, rate limiting, audit logging
+4. ✅ Runs on edge infrastructure
+
+The closest is `fire-1099` (57⭐) which generates FIRE-format files — but you still have to manually upload them through the IRS FIRE system. tax-agent handles the entire lifecycle: validate → create → transmit → track.
 
 ## Our Moat
 
