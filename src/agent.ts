@@ -1,6 +1,8 @@
 import type { Env, Form1099NECRequest, ValidationResult, ValidationIssue } from './types';
 
-const AI_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+// 8B is 3-5x faster and sufficient for JSON classification / form review.
+// Fallback: '@cf/meta/llama-3.3-70b-instruct-fp8-fast' if validation quality degrades.
+const AI_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
 
 // Hoisted to module scope — avoids re-allocation per call.
 const VALID_STATES = new Set([
