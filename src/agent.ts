@@ -105,13 +105,13 @@ function buildValidationPrompt(data: Form1099NECRequest): string {
   return `You are a tax form reviewer. Format and field validation has ALREADY PASSED — do NOT re-check TIN length, state codes, ZIP codes, or whether fields exist. Those are correct.
 
 Your job is ONLY to check for semantic issues a human tax preparer would catch:
-- Compensation over $1,000,000 for a single 1099-NEC (unusually high)
+- Compensation over $10,000,000 for a single 1099-NEC (extremely unusual)
 - Federal withholding exceeding 50% of compensation
 - Payer name that looks like gibberish or a test string (not a real business)
 - Obvious inconsistencies between data points (e.g., state mismatch)
 
 Do NOT flag:
-- Amounts under $1,000,000 — any amount from $1 to $999,999 is normal for contractor payments
+- Compensation amounts — ANY amount from $1 to $10,000,000 is normal for contractor payments. Do not question the amount.
 - Missing federal withholding — most 1099-NEC recipients handle their own estimated taxes
 - Missing state filing — this is optional and common
 
