@@ -11,11 +11,15 @@ export interface Env {
   TAXBANDITS_CLIENT_SECRET: string;
   TAXBANDITS_USER_TOKEN: string;
   TAXBANDITS_ENV: 'sandbox' | 'production';
-  TAX_AGENT_API_KEY?: string; // optional: if set, all mutating routes require Bearer auth
+  TAX_AGENT_API_KEY?: string; // legacy: if set, simple Bearer auth still works
   IDEMPOTENCY_KV?: KVNamespace; // optional: enables idempotency on POST /file
   RATE_LIMITER?: RateLimit; // Cloudflare native rate limit binding
   WEBHOOK_STATE?: DurableObjectNamespace<WebhookState>;
   AUDIT_LOG?: AnalyticsEngineDataset;
+  // better-auth bindings
+  AUTH_DB?: D1Database; // D1 database for better-auth (users, API keys, sessions)
+  BETTER_AUTH_SECRET?: string; // signing secret for sessions/tokens
+  BETTER_AUTH_URL?: string; // base URL (e.g., https://tax-agent.coey.dev)
 }
 
 // ============================================================
