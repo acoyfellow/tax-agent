@@ -149,13 +149,21 @@ export const openApiSpec: Record<string, unknown> = {
     license: { name: 'MIT' },
   },
   servers: [{ url: 'https://tax-agent.coey.dev' }],
-  security: [{ BearerAuth: [] }],
+  security: [{ BearerAuth: [], ApiKeyAuth: [] }],
   components: {
     securitySchemes: {
       BearerAuth: {
         type: 'http',
         scheme: 'bearer',
-        description: 'Set the TAX_AGENT_API_KEY secret. If unset the API runs in open dev mode.',
+        description:
+          'Legacy: set the TAX_AGENT_API_KEY secret. If unset, API runs in open dev mode.',
+      },
+      ApiKeyAuth: {
+        type: 'apiKey',
+        in: 'header',
+        name: 'x-api-key',
+        description:
+          'better-auth API key with scoped permissions. Create keys via POST /api/auth/sign-up/email + POST /api/auth/api-key/create.',
       },
     },
     schemas: {
