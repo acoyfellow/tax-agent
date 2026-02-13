@@ -30,9 +30,11 @@ Jordan is having a conversation with @grok on X. Grok drafted the original spec,
 ## Completed this session
 
 - Switched from custom `RateLimiter` interface to native Cloudflare `RateLimit` type from `@cloudflare/workers-types`
-- Deployed successfully — `env.RATE_LIMITER (20 requests/60s)` confirmed in deploy output
-- Health check passing at https://tax-agent.coey.dev/health
-- All 128 tests passing, typecheck clean
+- Added retry with exponential backoff + jitter for TaxBandits API calls (src/retry.ts, 36 tests)
+- Added 9 floating-point rounding edge case tests
+- Added secrets rotation policy to README
+- Deployed successfully — health check passing
+- **Tests: 173** (was 128)
 
 ## Next task: Wait for Grok's next suggestion
 
