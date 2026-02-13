@@ -36,12 +36,31 @@ curl -X POST https://your-domain.com/api/auth/sign-up/email \
   -d '{"email":"you@company.com","password":"SecurePass123!","name":"Your Name"}'
 ```
 
-### 4. Create a scoped API key
+### 4. Create an API key
+
+**Self-service** (gets default permissions: `filings:validate`, `status:read`, `webhooks:read`):
 
 ```bash
-curl -X POST https://your-domain.com/api/auth/api-key/create \
+# Sign in first to get a session cookie
+curl -c cookies.txt -X POST https://your-domain.com/api/auth/sign-in/email \
   -H 'Content-Type: application/json' \
+  -d '{"email":"you@company.com","password":"SecurePass123!"}'
+
+# Create key (uses default permissions)
+curl -b cookies.txt -X POST https://your-domain.com/api/auth/api-key/create \
+  -H 'Content-Type: application/json' \
+  -H 'Origin: https://your-domain.com' \
+  -d '{"name": "my-key"}'
+```
+
+**Admin** (custom permissions via `TAX_AGENT_API_KEY`):
+
+```bash
+curl -X POST https://your-domain.com/api/auth/admin/create-key \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer YOUR_ADMIN_KEY' \
   -d '{
+    "userId": "USER_ID_FROM_SIGNUP",
     "name": "production-key",
     "permissions": {
       "filings": ["validate", "create", "transmit"],
