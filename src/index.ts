@@ -27,6 +27,7 @@ import { rateLimiter } from './ratelimit';
 import { scrubTINs } from './pii';
 import { auditLogger } from './audit';
 import { verifyWebhookSignature, parseWebhookPayload } from './webhook';
+import { createAuth, verifyApiKey, getRequiredPermissions } from './auth';
 
 // ---------------------------------------------------------------------------
 // Zod schemas — runtime validation for POST bodies
@@ -106,35 +107,62 @@ app.use('*', bodyLimit({ maxSize: 64 * 1024 })); // 64 KB
 // Rate-limit POST endpoints (20 req/min per IP). GET routes are unlimited.
 app.post('*', rateLimiter());
 
-// API key auth on mutating routes. If TAX_AGENT_API_KEY is not set, routes are open (dev mode).
-app.use('/validate', async (c, next) => {
-  if (!c.env.TAX_AGENT_API_KEY) return next();
-  return bearerAuth({ token: c.env.TAX_AGENT_API_KEY })(c, next);
-});
-app.use('/file', async (c, next) => {
-  if (!c.env.TAX_AGENT_API_KEY) return next();
-  return bearerAuth({ token: c.env.TAX_AGENT_API_KEY })(c, next);
-});
-app.use('/file/batch', async (c, next) => {
-  if (!c.env.TAX_AGENT_API_KEY) return next();
-  return bearerAuth({ token: c.env.TAX_AGENT_API_KEY })(c, next);
-});
-app.use('/transmit/*', async (c, next) => {
-  if (!c.env.TAX_AGENT_API_KEY) return next();
-  return bearerAuth({ token: c.env.TAX_AGENT_API_KEY })(c, next);
-});
-app.use('/status/*', async (c, next) => {
-  if (!c.env.TAX_AGENT_API_KEY) return next();
-  return bearerAuth({ token: c.env.TAX_AGENT_API_KEY })(c, next);
-});
-app.use('/webhook/submissions', async (c, next) => {
-  if (!c.env.TAX_AGENT_API_KEY) return next();
-  return bearerAuth({ token: c.env.TAX_AGENT_API_KEY })(c, next);
-});
-app.use('/webhook/submissions/*', async (c, next) => {
-  if (!c.env.TAX_AGENT_API_KEY) return next();
-  return bearerAuth({ token: c.env.TAX_AGENT_API_KEY })(c, next);
-});
+// ---------------------------------------------------------------------------
+// Dual-mode auth: better-auth API keys (x-api-key) + legacy Bearer token
+// If neither TAX_AGENT_API_KEY nor AUTH_DB is configured, routes are open (dev mode).
+// ---------------------------------------------------------------------------
+const PROTECTED_ROUTES = [
+  '/validate',
+  '/file',
+  '/file/batch',
+  '/transmit',
+  '/status',
+  '/webhook/submissions',
+];
+
+for (const route of PROTECTED_ROUTES) {
+  const pattern = route.includes('/transmit') || route.includes('/status') || route === '/webhook/submissions'
+    ? `${route}/*`
+    : route;
+  // Exact match
+  app.use(route, authMiddleware);
+  // Wildcard sub-routes (e.g., /transmit/:id)
+  if (pattern !== route) app.use(pattern, authMiddleware);
+}
+
+async function authMiddleware(c: { env: Env; req: { header: (name: string) => string | undefined; raw: Request }; set: (key: string, value: unknown) => void }, next: () => Promise<void>) {
+  const hasLegacyKey = !!c.env.TAX_AGENT_API_KEY;
+  // better-auth is active only when both AUTH_DB and BETTER_AUTH_SECRET are set
+  const hasBetterAuth = !!c.env.AUTH_DB && !!c.env.BETTER_AUTH_SECRET;
+
+  // Dev mode: no auth configured at all
+  if (!hasLegacyKey && !hasBetterAuth) return next();
+
+  // Check for x-api-key header (better-auth API keys)
+  const xApiKey = c.req.header('x-api-key');
+  if (xApiKey && hasBetterAuth) {
+    const path = new URL(c.req.raw.url).pathname;
+    const requiredPermissions = getRequiredPermissions(path) ?? undefined;
+    const result = await verifyApiKey(c.env as Env, xApiKey, requiredPermissions);
+    if (result.valid) {
+      c.set('apiKeyId', result.keyId);
+      c.set('userId', result.userId);
+      return next();
+    }
+    throw new HTTPException(403, { message: result.error ?? 'Forbidden: insufficient permissions' });
+  }
+
+  // Check for Bearer token (legacy TAX_AGENT_API_KEY)
+  const authHeader = c.req.header('Authorization');
+  if (authHeader && hasLegacyKey) {
+    const token = authHeader.replace(/^Bearer\s+/i, '');
+    if (token === c.env.TAX_AGENT_API_KEY) return next();
+    throw new HTTPException(401, { message: 'Unauthorized: invalid Bearer token' });
+  }
+
+  // No credentials provided
+  throw new HTTPException(401, { message: 'Unauthorized: provide x-api-key header or Bearer token' });
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -163,6 +191,48 @@ function aiFallbackResult(data: Form1099NECRequest, errMessage: string): Validat
 }
 
 // ---------------------------------------------------------------------------
+// better-auth handler — mount at /api/auth/*
+// ---------------------------------------------------------------------------
+app.on(['POST', 'GET'], '/api/auth/*', async (c) => {
+  if (!c.env.AUTH_DB) {
+    return c.json({ error: 'Auth not configured (AUTH_DB binding missing)' }, 503);
+  }
+  const auth = createAuth(c.env);
+  return auth.handler(c.req.raw);
+});
+
+// ---------------------------------------------------------------------------
+// Migration endpoint — run once after deploy to create better-auth tables
+// ---------------------------------------------------------------------------
+app.post('/api/auth/migrate', async (c) => {
+  if (!c.env.AUTH_DB) {
+    return c.json({ error: 'AUTH_DB not configured' }, 503);
+  }
+  // Only allow with legacy admin key
+  if (c.env.TAX_AGENT_API_KEY) {
+    const authHeader = c.req.header('Authorization');
+    const token = authHeader?.replace(/^Bearer\s+/i, '');
+    if (token !== c.env.TAX_AGENT_API_KEY) {
+      throw new HTTPException(401, { message: 'Admin auth required for migrations' });
+    }
+  }
+  const { getMigrations } = await import('better-auth/db');
+  const auth = createAuth(c.env);
+  const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.options);
+  if (toBeCreated.length === 0 && toBeAdded.length === 0) {
+    return c.json({ success: true, data: { message: 'No migrations needed' } });
+  }
+  await runMigrations();
+  return c.json({
+    success: true,
+    data: {
+      created: toBeCreated.map((t: { table: string }) => t.table),
+      added: toBeAdded.map((t: { table: string }) => t.table),
+    },
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 
@@ -183,7 +253,7 @@ app.get('/', (c) => {
       'GET /webhook/submissions': 'List tracked submissions (Bearer auth)',
       'GET /webhook/submissions/:id': 'Get submission status (Bearer auth)',
     },
-    auth: 'Bearer token required on mutating routes (set TAX_AGENT_API_KEY secret)',
+    auth: 'x-api-key header (better-auth) or Bearer token (legacy). See POST /api/auth/* for key management.',
     docs: 'https://github.com/acoyfellow/tax-agent',
   });
 });
@@ -208,7 +278,11 @@ app.get('/health', async (c) => {
   }
 
   checks['taxbandits_env'] = c.env.TAXBANDITS_ENV ?? 'sandbox';
-  checks['auth'] = c.env.TAX_AGENT_API_KEY ? 'enabled' : 'disabled (dev mode)';
+  checks['auth'] = c.env.AUTH_DB && c.env.BETTER_AUTH_SECRET
+    ? 'better-auth (D1)'
+    : c.env.TAX_AGENT_API_KEY
+      ? 'legacy bearer'
+      : 'disabled (dev mode)';
 
   const healthy =
     checks['workers_ai'] === 'available' && checks['taxbandits_oauth'] === 'authenticated';
