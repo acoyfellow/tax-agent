@@ -29,12 +29,21 @@ Jordan is having a conversation with @grok on X. Grok drafted the original spec,
 
 ## Completed this session
 
-- Switched from custom `RateLimiter` interface to native Cloudflare `RateLimit` type from `@cloudflare/workers-types`
-- Added retry with exponential backoff + jitter for TaxBandits API calls (src/retry.ts, 36 tests)
-- Added 9 floating-point rounding edge case tests
-- Added secrets rotation policy to README
-- Deployed successfully — health check passing
-- **Tests: 173** (was 128)
+- **Effect rewrite** — Data.TaggedError, Effect.retry + Schedule, typed error channels
+- Deleted hand-rolled retry.ts (112 lines replaced by 3 lines of Effect Schedule)
+- **TaxBandits webhook support** — POST /webhook/status with HMAC-SHA256 verification
+- **Durable Object** (WebhookState) with SQLite for submission persistence
+- **Audit logging** via Workers Analytics Engine (every request logged for compliance)
+- Floating-point rounding edge case tests
+- Secrets rotation policy docs
+- Bundle minified: 160KB gzipped
+- Cold starts: ~500ms (OAuth), warm: ~67ms
+- **Tests: 151 passing** | **Lines: 4,253** | **Files: 17**
+
+## Still TODO from Grok suggestions
+
+- Demo dashboard with Cloudflare Pages (dogfoods the API)
+- AI-driven form autofill (scope creep? maybe later)
 
 ## Next task: Wait for Grok's next suggestion
 
