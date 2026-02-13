@@ -1,0 +1,14 @@
+name = "tax-agent"
+main = "src/index.ts"
+compatibility_date = "2025-02-13"
+
+[ai]
+binding = "AI"
+
+[vars]
+COLUMN_TAX_ENV = "sandbox"
+COLUMN_TAX_BASE_URL = "https://sandbox.columnapi.com"
+
+# Set these as secrets via `wrangler secret put`:
+# COLUMN_TAX_CLIENT_ID
+# COLUMN_TAX_CLIENT_SECRET
