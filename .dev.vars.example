@@ -1,0 +1,8 @@
+# Cloudflare Workers local dev vars
+# Copy to .dev.vars and fill in real values
+# NEVER commit .dev.vars — it's in .gitignore
+
+TAXBANDITS_CLIENT_ID=your-client-id-here
+TAXBANDITS_CLIENT_SECRET=your-client-secret-here
+TAXBANDITS_USER_TOKEN=your-user-token-here
+TAX_AGENT_API_KEY=your-api-key-here
