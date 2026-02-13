@@ -203,6 +203,39 @@ function aiFallbackResult(data: Form1099NECRequest, errMessage: string): Validat
 }
 
 // ---------------------------------------------------------------------------
+// Admin: create API key with server-side permissions
+// Requires admin auth (legacy Bearer TAX_AGENT_API_KEY).
+// ---------------------------------------------------------------------------
+app.post('/api/auth/admin/create-key', async (c) => {
+  if (!c.env.AUTH_DB || !c.env.BETTER_AUTH_SECRET) {
+    return c.json({ error: 'Auth not configured' }, 503);
+  }
+  // Admin-only: require legacy bearer token
+  if (!c.env.TAX_AGENT_API_KEY) {
+    throw new HTTPException(403, { message: 'Admin key not configured' });
+  }
+  const authHeader = c.req.header('Authorization');
+  const token = authHeader?.replace(/^Bearer\s+/i, '');
+  if (token !== c.env.TAX_AGENT_API_KEY) {
+    throw new HTTPException(401, { message: 'Admin auth required' });
+  }
+  const body = await c.req.json<{ userId: string; name?: string; permissions?: Record<string, string[]>; expiresIn?: number }>();
+  if (!body.userId) {
+    return c.json({ error: 'userId is required' }, 400);
+  }
+  const auth = createAuth(c.env);
+  const key = await auth.api.createApiKey({
+    body: {
+      userId: body.userId,
+      name: body.name,
+      permissions: body.permissions,
+      expiresIn: body.expiresIn,
+    },
+  });
+  return c.json({ success: true, data: key });
+});
+
+// ---------------------------------------------------------------------------
 // better-auth handler — mount at /api/auth/*
 // ---------------------------------------------------------------------------
 app.on(['POST', 'GET'], '/api/auth/*', async (c) => {
