@@ -2,9 +2,10 @@ import { Effect } from 'effect';
 import type { Env, Form1099NECRequest, ValidationResult, ValidationIssue } from './types';
 import { AIValidationError } from './types';
 
-// 8B is 3-5x faster and sufficient for JSON classification / form review.
-// Fallback: '@cf/meta/llama-3.3-70b-instruct-fp8-fast' if validation quality degrades.
-const AI_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
+// GLM-4.7-Flash: 131K context, multi-turn tool calling, fast inference.
+// Released 2026-02-13. Replaces Llama 3.1 8B for better instruction following.
+// Fallback: '@cf/meta/llama-3.1-8b-instruct-fp8' if needed.
+const AI_MODEL = '@cf/zai-org/glm-4.7-flash';
 
 // Hoisted to module scope — avoids re-allocation per call.
 const VALID_STATES = new Set([
@@ -346,7 +347,7 @@ export function validateForm(
     const prompt = buildValidationPrompt(data);
     const aiResponse = yield* Effect.tryPromise({
       try: () =>
-        env.AI.run(AI_MODEL, {
+        env.AI.run(AI_MODEL as Parameters<typeof env.AI.run>[0], {
           messages: [
             {
               role: 'system',

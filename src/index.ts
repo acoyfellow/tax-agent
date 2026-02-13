@@ -158,7 +158,7 @@ function aiFallbackResult(data: Form1099NECRequest, errMessage: string): Validat
       },
     ],
     summary: 'AI validation failed — cannot proceed without semantic review',
-    ai_model: '@cf/meta/llama-3.1-8b-instruct-fp8 (failed)',
+    ai_model: '@cf/zai-org/glm-4.7-flash (failed)',
   };
 }
 
