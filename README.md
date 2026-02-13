@@ -4,7 +4,7 @@ AI-powered tax filing agent on Cloudflare Workers. Validates your data with Work
 
 ## Origin
 
-This started as a [conversation on X](https://x.com/whoiskatrin) about AI agents and tax filing. [Ben (@nurodev)](https://github.com/nurodev) asked the question — _"But can it finally do my taxes for me?"_ — and [@grok](https://x.com/grok) drafted the first spec. This repo is that spec made real, built on current Cloudflare patterns.
+This started as a [conversation on X](https://x.com/nurodev) about AI agents and tax filing. [Ben (@nurodev)](https://github.com/nurodev) asked the question — _"But can it finally do my taxes for me?"_ — and [@grok](https://x.com/grok) drafted the first spec. This repo is that spec made real, built on current Cloudflare patterns.
 
 ## How it works
 
