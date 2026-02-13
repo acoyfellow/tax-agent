@@ -8,6 +8,7 @@ import type {
   TaxBanditsTransmitResponse,
   TaxBanditsStatusResponse,
 } from './types';
+import { retryWithBackoff } from './retry';
 
 // ============================================================
 // Config
@@ -104,10 +105,12 @@ export async function getAccessToken(env: Env): Promise<string> {
     env.TAXBANDITS_USER_TOKEN,
   );
 
-  const response = await fetch(getOAuthUrl(env), {
-    method: 'GET',
-    headers: { Authentication: jws },
-  });
+  const response = await retryWithBackoff(() =>
+    fetch(getOAuthUrl(env), {
+      method: 'GET',
+      headers: { Authentication: jws },
+    }),
+  );
 
   if (!response.ok) {
     const text = await response.text();
@@ -139,14 +142,16 @@ async function apiCall<T extends { StatusCode?: number; Errors?: TaxBanditsError
 ): Promise<T> {
   const token = await getAccessToken(env);
 
-  const response = await fetch(`${getBaseUrl(env)}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const response = await retryWithBackoff(() =>
+    fetch(`${getBaseUrl(env)}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    }),
+  );
 
   if (!response.ok) {
     const text = await response.text();
