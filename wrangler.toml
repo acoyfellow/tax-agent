@@ -1,5 +1,6 @@
 name = "tax-agent"
 main = "src/index.ts"
+account_id = "bfcb6ac5b3ceaf42a09607f6f7925823"
 compatibility_date = "2025-02-13"
 
 [ai]
