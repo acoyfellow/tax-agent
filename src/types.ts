@@ -213,6 +213,43 @@ export interface TaxBanditsStatusResponse {
 }
 
 // ============================================================
+// Effect Error Types — typed error channel
+// ============================================================
+
+/** TaxBandits returned 401/403 — credentials are wrong, don't retry. */
+export class TaxBanditsAuthError {
+  readonly _tag = 'TaxBanditsAuthError' as const;
+  constructor(readonly message: string) {}
+}
+
+/** TaxBandits returned 429/5xx or network failed — safe to retry. */
+export class TaxBanditsTransientError {
+  readonly _tag = 'TaxBanditsTransientError' as const;
+  constructor(
+    readonly status: number,
+    readonly message: string,
+  ) {}
+}
+
+/** TaxBandits returned a business-level error (HTTP 200 but StatusCode >= 400). */
+export class TaxBanditsBusinessError {
+  readonly _tag = 'TaxBanditsBusinessError' as const;
+  constructor(
+    readonly statusCode: number,
+    readonly errors: TaxBanditsError[],
+  ) {}
+  get message(): string {
+    return this.errors.map((e) => `${e.Id}: ${e.Message}`).join('; ') || 'Unknown business error';
+  }
+}
+
+/** Workers AI call failed. */
+export class AIValidationError {
+  readonly _tag = 'AIValidationError' as const;
+  constructor(readonly message: string) {}
+}
+
+// ============================================================
 // API Response envelope
 // ============================================================
 
