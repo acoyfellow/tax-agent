@@ -1,7 +1,7 @@
 {
   "name": "tax-agent",
   "version": "1.0.0",
-  "description": "AI-powered tax filing agent on Cloudflare Workers — validates your data with Workers AI, files via Column Tax",
+  "description": "AI-powered tax form agent on Cloudflare Workers — validates with Workers AI, files via TaxBandits",
   "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler dev",
@@ -15,7 +15,8 @@
     "lint": "prettier --check 'src/**/*.ts'"
   },
   "dependencies": {
-    "hono": "^4.7.0"
+    "hono": "^4.7.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.8.0",

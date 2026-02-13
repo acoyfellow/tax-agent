@@ -2,6 +2,70 @@ import type { Env, Form1099NECRequest, ValidationResult, ValidationIssue } from 
 
 const AI_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 
+// Hoisted to module scope — avoids re-allocation per call.
+const VALID_STATES = new Set([
+  'AL',
+  'AK',
+  'AZ',
+  'AR',
+  'CA',
+  'CO',
+  'CT',
+  'DE',
+  'FL',
+  'GA',
+  'HI',
+  'ID',
+  'IL',
+  'IN',
+  'IA',
+  'KS',
+  'KY',
+  'LA',
+  'ME',
+  'MD',
+  'MA',
+  'MI',
+  'MN',
+  'MS',
+  'MO',
+  'MT',
+  'NE',
+  'NV',
+  'NH',
+  'NJ',
+  'NM',
+  'NY',
+  'NC',
+  'ND',
+  'OH',
+  'OK',
+  'OR',
+  'PA',
+  'RI',
+  'SC',
+  'SD',
+  'TN',
+  'TX',
+  'UT',
+  'VT',
+  'VA',
+  'WA',
+  'WV',
+  'WI',
+  'WY',
+  'DC',
+  // US territories (valid for IRS filings)
+  'AS',
+  'GU',
+  'MP',
+  'PR',
+  'VI',
+  'AA',
+  'AE',
+  'AP',
+]);
+
 /**
  * Build a prompt for the AI to review 1099-NEC data.
  * Structural validation already passed — AI focuses on semantic checks.
@@ -23,10 +87,10 @@ If you find real issues, return {"valid": false, "issues": [{"field": "...", "me
 Use severity "warning" for things worth reviewing and "info" for suggestions. Never use "error" — that is reserved for the structural validator.
 
 1099-NEC Data:
-- Payer: ${data.payer.name} (EIN: ${data.payer.tin})
+- Payer: ${data.payer.name} (EIN: ***-***${data.payer.tin.slice(-4)})
 - Payer Location: ${data.payer.city}, ${data.payer.state}
 - Recipient: ${data.recipient.first_name} ${data.recipient.last_name}
-- Recipient TIN Type: ${data.recipient.tin_type}
+- Recipient TIN Type: ${data.recipient.tin_type} (last 4: ${data.recipient.tin.replace(/-/g, '').slice(-4)})
 - Recipient Location: ${data.recipient.city}, ${data.recipient.state}
 - Nonemployee Compensation: $${data.nonemployee_compensation.toLocaleString()}
 - Federal Tax Withheld: ${data.is_federal_tax_withheld ? `$${(data.federal_tax_withheld ?? 0).toLocaleString()}` : 'none'}
@@ -42,60 +106,6 @@ Return ONLY valid JSON, no markdown fences, no explanation.`;
 function runStructuralValidations(data: Form1099NECRequest): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
-  const validStates = new Set([
-    'AL',
-    'AK',
-    'AZ',
-    'AR',
-    'CA',
-    'CO',
-    'CT',
-    'DE',
-    'FL',
-    'GA',
-    'HI',
-    'ID',
-    'IL',
-    'IN',
-    'IA',
-    'KS',
-    'KY',
-    'LA',
-    'ME',
-    'MD',
-    'MA',
-    'MI',
-    'MN',
-    'MS',
-    'MO',
-    'MT',
-    'NE',
-    'NV',
-    'NH',
-    'NJ',
-    'NM',
-    'NY',
-    'NC',
-    'ND',
-    'OH',
-    'OK',
-    'OR',
-    'PA',
-    'RI',
-    'SC',
-    'SD',
-    'TN',
-    'TX',
-    'UT',
-    'VT',
-    'VA',
-    'WA',
-    'WV',
-    'WI',
-    'WY',
-    'DC',
-  ]);
-
   // Payer TIN (EIN format: XX-XXXXXXX)
   if (!/^\d{2}-\d{7}$/.test(data.payer.tin)) {
     issues.push({
@@ -106,7 +116,7 @@ function runStructuralValidations(data: Form1099NECRequest): ValidationIssue[] {
   }
 
   // Payer state
-  if (!validStates.has(data.payer.state)) {
+  if (!VALID_STATES.has(data.payer.state)) {
     issues.push({
       field: 'payer.state',
       message: `Invalid state: ${data.payer.state}`,
@@ -129,7 +139,7 @@ function runStructuralValidations(data: Form1099NECRequest): ValidationIssue[] {
   }
 
   // Recipient TIN
-  const tinClean = data.recipient.tin.replace('-', '');
+  const tinClean = data.recipient.tin.replace(/-/g, '');
   if (data.recipient.tin_type === 'SSN' && !/^\d{9}$/.test(tinClean)) {
     issues.push({ field: 'recipient.tin', message: 'SSN must be 9 digits', severity: 'error' });
   }
@@ -142,7 +152,7 @@ function runStructuralValidations(data: Form1099NECRequest): ValidationIssue[] {
   }
 
   // Recipient state
-  if (!validStates.has(data.recipient.state)) {
+  if (!VALID_STATES.has(data.recipient.state)) {
     issues.push({
       field: 'recipient.state',
       message: `Invalid state: ${data.recipient.state}`,
@@ -185,7 +195,7 @@ function runStructuralValidations(data: Form1099NECRequest): ValidationIssue[] {
       severity: 'error',
     });
   }
-  if (data.is_state_filing && data.state && !validStates.has(data.state)) {
+  if (data.is_state_filing && data.state && !VALID_STATES.has(data.state)) {
     issues.push({
       field: 'state',
       message: `Invalid filing state: ${data.state}`,
@@ -297,10 +307,19 @@ export async function validateForm(env: Env, data: Form1099NECRequest): Promise<
 
     return { valid, issues: allIssues, summary: aiResult.summary, ai_model: AI_MODEL };
   } catch (err) {
+    // Fail closed: AI unavailable = not valid. Tax filing should not
+    // proceed without semantic review.
     return {
-      valid: !hasErrors,
-      issues: structuralIssues,
-      summary: `AI unavailable (${err instanceof Error ? err.message : 'unknown'}), structural checks passed`,
+      valid: false,
+      issues: [
+        ...structuralIssues,
+        {
+          field: 'ai_validation',
+          message: `AI review unavailable: ${err instanceof Error ? err.message : 'unknown error'}. Retry later.`,
+          severity: 'error' as const,
+        },
+      ],
+      summary: 'AI validation failed — cannot proceed without semantic review',
       ai_model: `${AI_MODEL} (failed)`,
     };
   }

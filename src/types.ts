@@ -8,6 +8,7 @@ export interface Env {
   TAXBANDITS_CLIENT_SECRET: string;
   TAXBANDITS_USER_TOKEN: string;
   TAXBANDITS_ENV: 'sandbox' | 'production';
+  TAX_AGENT_API_KEY?: string; // optional: if set, all mutating routes require Bearer auth
 }
 
 // ============================================================
@@ -69,6 +70,13 @@ export interface ValidationResult {
 // ============================================================
 // TaxBandits API types
 // ============================================================
+
+export interface TaxBanditsError {
+  Id: string;
+  Name: string;
+  Message: string;
+  Type: string;
+}
 
 export interface TaxBanditsTokenResponse {
   StatusCode: number;
@@ -147,9 +155,9 @@ export interface TaxBanditsCreateResponse {
     RecordId: string;
     RecordStatus: string;
     Sequence: string;
-    Errors: Array<{ Code: string; Name: string; Message: string; Type: string }> | null;
+    Errors: TaxBanditsError[] | null;
   }>;
-  Errors: Array<{ Code: string; Name: string; Message: string; Type: string }> | null;
+  Errors: TaxBanditsError[] | null;
 }
 
 export interface TaxBanditsTransmitResponse {
@@ -157,7 +165,7 @@ export interface TaxBanditsTransmitResponse {
   StatusName: string;
   StatusMessage: string;
   SubmissionId: string;
-  Errors: Array<{ Code: string; Name: string; Message: string; Type: string }> | null;
+  Errors: TaxBanditsError[] | null;
 }
 
 export interface TaxBanditsStatusResponse {
@@ -169,9 +177,9 @@ export interface TaxBanditsStatusResponse {
   FormRecords: Array<{
     RecordId: string;
     RecordStatus: string;
-    Errors: Array<{ Code: string; Name: string; Message: string; Type: string }> | null;
+    Errors: TaxBanditsError[] | null;
   }> | null;
-  Errors: Array<{ Code: string; Name: string; Message: string; Type: string }> | null;
+  Errors: TaxBanditsError[] | null;
 }
 
 // ============================================================

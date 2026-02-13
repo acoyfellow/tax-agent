@@ -1,6 +1,7 @@
 import type {
   Env,
   Form1099NECRequest,
+  TaxBanditsError,
   TaxBanditsTokenResponse,
   TaxBanditsCreateRequest,
   TaxBanditsCreateResponse,
@@ -12,10 +13,18 @@ import type {
 // Config
 // ============================================================
 
-const SANDBOX_API = 'https://testapi.taxbandits.com/v1.7.3';
+const API_VERSION = 'v1.7.3';
+const SANDBOX_API = `https://testapi.taxbandits.com/${API_VERSION}`;
 const SANDBOX_OAUTH = 'https://testoauth.expressauth.net/v2/tbsauth';
-const PROD_API = 'https://api.taxbandits.com/v1.7.3';
+const PROD_API = `https://api.taxbandits.com/${API_VERSION}`;
 const PROD_OAUTH = 'https://oauth.expressauth.net/v2/tbsauth';
+
+// Token cache — survives within a single Worker isolate.
+// Workers may share isolates across requests, so this avoids
+// re-authenticating on every call. Tokens expire in 3600s;
+// we refresh at 3300s (5 min buffer) to avoid edge-case expiry.
+let tokenCache: { token: string; expiresAt: number } | null = null;
+const TOKEN_BUFFER_MS = 300_000; // refresh 5 min before expiry
 
 function getBaseUrl(env: Env): string {
   return env.TAXBANDITS_ENV === 'production' ? PROD_API : SANDBOX_API;
@@ -79,9 +88,16 @@ async function buildJWS(
 
 /**
  * Get an access token from TaxBandits OAuth.
+ * Caches within the Worker isolate; re-fetches 5 min before expiry.
+ *
  * Note: header is "Authentication" (not "Authorization") and method is GET.
+ * See: https://developer.taxbandits.com/docs/oauth2.0authentication/
  */
 export async function getAccessToken(env: Env): Promise<string> {
+  if (tokenCache && Date.now() < tokenCache.expiresAt) {
+    return tokenCache.token;
+  }
+
   const jws = await buildJWS(
     env.TAXBANDITS_CLIENT_ID,
     env.TAXBANDITS_CLIENT_SECRET,
@@ -103,6 +119,11 @@ export async function getAccessToken(env: Env): Promise<string> {
     throw new Error(`OAuth error: ${data.StatusMessage} ${JSON.stringify(data.Errors)}`);
   }
 
+  tokenCache = {
+    token: data.AccessToken,
+    expiresAt: Date.now() + data.ExpiresIn * 1000 - TOKEN_BUFFER_MS,
+  };
+
   return data.AccessToken;
 }
 
@@ -110,7 +131,12 @@ export async function getAccessToken(env: Env): Promise<string> {
 // API helpers
 // ============================================================
 
-async function apiCall<T>(env: Env, method: string, path: string, body?: unknown): Promise<T> {
+async function apiCall<T extends { StatusCode?: number; Errors?: TaxBanditsError[] | null }>(
+  env: Env,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<T> {
   const token = await getAccessToken(env);
 
   const response = await fetch(`${getBaseUrl(env)}${path}`, {
@@ -127,7 +153,15 @@ async function apiCall<T>(env: Env, method: string, path: string, body?: unknown
     throw new Error(`TaxBandits API error (${response.status}): ${text}`);
   }
 
-  return response.json() as Promise<T>;
+  const data = (await response.json()) as T;
+
+  // TaxBandits can return HTTP 200 with business-level errors
+  if (data.StatusCode && data.StatusCode >= 400) {
+    const msgs = (data.Errors ?? []).map((e) => `${e.Id}: ${e.Message}`).join('; ');
+    throw new Error(`TaxBandits error (${data.StatusCode}): ${msgs || 'Unknown error'}`);
+  }
+
+  return data;
 }
 
 // ============================================================
@@ -148,7 +182,7 @@ function buildCreateRequest(data: Form1099NECRequest): TaxBanditsCreateRequest {
     ReturnHeader: {
       Business: {
         BusinessNm: data.payer.name,
-        EINorSSN: data.payer.tin.replace('-', ''),
+        EINorSSN: data.payer.tin.replace(/-/g, ''),
         IsEIN: true,
         BusinessType: 'ESTE', // Estate; also: CORP, SCORP, PART, TRUST, LLC, EXEMPT
         Phone: data.payer.phone.replace(/\D/g, ''),
@@ -170,7 +204,7 @@ function buildCreateRequest(data: Form1099NECRequest): TaxBanditsCreateRequest {
         SequenceId: 'seq-001',
         Recipient: {
           TINType: data.recipient.tin_type,
-          TIN: data.recipient.tin.replace('-', ''),
+          TIN: data.recipient.tin.replace(/-/g, ''),
           FirstPayeeNm: `${data.recipient.first_name} ${data.recipient.last_name}`,
           IsForeignAddress: false,
           USAddress: {
