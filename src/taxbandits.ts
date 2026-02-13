@@ -190,7 +190,7 @@ function buildCreateRequest(data: Form1099NECRequest): TaxBanditsCreateRequest {
         KindOfEmployer: data.kind_of_employer ?? 'NONEAPPLY',
         KindOfPayer: data.kind_of_payer ?? 'REGULAR941',
         IsBusinessTerminated: false,
-        IsForeignAddress: false,
+        IsForeignAddress: false, // TODO: support foreign addresses (see README known limitations)
         USAddress: {
           Address1: data.payer.address,
           City: data.payer.city,
@@ -206,7 +206,7 @@ function buildCreateRequest(data: Form1099NECRequest): TaxBanditsCreateRequest {
           TINType: data.recipient.tin_type,
           TIN: data.recipient.tin.replace(/-/g, ''),
           FirstPayeeNm: `${data.recipient.first_name} ${data.recipient.last_name}`,
-          IsForeignAddress: false,
+          IsForeignAddress: false, // TODO: support foreign addresses (see README known limitations)
           USAddress: {
             Address1: data.recipient.address,
             City: data.recipient.city,
