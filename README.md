@@ -111,22 +111,30 @@ The three-step flow (create → transmit → poll status) mirrors TaxBandits' ow
 | `GET`  | `/health`                 | No     | Workers AI + TaxBandits OAuth status                    |
 | `POST` | `/validate`               | Bearer | Validate 1099-NEC (AI only, nothing sent to TaxBandits) |
 | `POST` | `/file`                   | Bearer | Validate → create 1099-NEC in TaxBandits                |
+| `POST` | `/file/batch`             | Bearer | Validate → create up to 100 1099-NECs in one submission |
 | `POST` | `/transmit/:submissionId` | Bearer | Transmit to IRS                                         |
 | `GET`  | `/status/:submissionId`   | Bearer | Poll filing status                                      |
+| `GET`  | `/openapi.json`           | No     | OpenAPI 3.1 specification                               |
 
 All responses: `{ success: boolean, data?, error?, details? }`
 
-Amounts are in **dollars** (e.g., `5000.00`).
+Amounts are in **dollars** (e.g., `5000.00`). POST endpoints are rate-limited to 20 requests/minute per IP.
 
 ## Project structure
 
 ```
 src/
-├── index.ts        # Hono routes, Zod schemas, auth middleware
-├── index.test.ts   # 28 integration tests (Vitest + Cloudflare pool)
-├── agent.ts        # Structural + AI validation pipeline
-├── taxbandits.ts   # TaxBandits API client (JWS auth, token cache)
-└── types.ts        # All TypeScript types
+├── index.ts           # Hono routes, Zod schemas, auth middleware
+├── index.test.ts      # 28 integration tests
+├── agent.ts           # Structural + AI validation pipeline
+├── agent.test.ts      # 42 unit tests (pure functions)
+├── taxbandits.ts      # TaxBandits API client (JWS auth, token cache)
+├── taxbandits.test.ts # 37 unit tests (crypto, request building)
+├── pii.ts             # TIN masking and scrubbing
+├── pii.test.ts        # 11 PII tests
+├── ratelimit.ts       # Per-IP rate limiter (20 req/min on POST)
+├── openapi.ts         # OpenAPI 3.1 spec
+└── types.ts           # All TypeScript types
 ```
 
 Built on [Cloudflare Workers](https://developers.cloudflare.com/workers/) + [Workers AI](https://developers.cloudflare.com/workers-ai/) + [Hono](https://hono.dev) + [TaxBandits](https://developer.taxbandits.com).
@@ -137,7 +145,7 @@ TaxBandits is the only tax API with self-serve sandbox signup, a real IRS e-file
 
 ## Known limitations
 
-- **Single recipient per request:** TaxBandits supports batch filing (multiple recipients per submission), but this API accepts only one recipient per `POST /file` request. To file for multiple recipients, make separate requests.
+- **Batch filing limit:** `POST /file/batch` accepts up to 100 recipients per submission. All recipients must share the same payer.
 - **US addresses only:** Both payer and recipient addresses are assumed to be US domestic. `IsForeignAddress` is hardcoded to `false`. Foreign addresses are not supported.
 - **Sandbox by default:** The TaxBandits integration defaults to sandbox mode (`TAXBANDITS_ENV=sandbox`). Set `TAXBANDITS_ENV=production` with valid production credentials for real IRS filings.
 - **Floating-point money:** Amounts are JavaScript `number` (IEEE 754 doubles). Values are rounded to 2 decimal places with `.toFixed(2)` before sending to TaxBandits, which can cause ±$0.01 discrepancies for unusual inputs. For cent-perfect accuracy, send amounts that are already clean decimals (e.g., `5000.00`, not `5000.004`).

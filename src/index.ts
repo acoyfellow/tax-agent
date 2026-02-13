@@ -14,7 +14,16 @@ import type {
   TaxBanditsStatusResponse,
 } from './types';
 import { validateForm } from './agent';
-import { create1099NEC, transmit, getStatus, getAccessToken } from './taxbandits';
+import { openApiSpec } from './openapi';
+import {
+  create1099NEC,
+  createBatch1099NEC,
+  transmit,
+  getStatus,
+  getAccessToken,
+} from './taxbandits';
+import { rateLimiter } from './ratelimit';
+import { scrubTINs } from './pii';
 
 // ---------------------------------------------------------------------------
 // Zod schemas — runtime validation for POST bodies
@@ -90,12 +99,19 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', cors());
 app.use('*', bodyLimit({ maxSize: 64 * 1024 })); // 64 KB
 
+// Rate-limit POST endpoints (20 req/min per IP). GET routes are unlimited.
+app.post('*', rateLimiter());
+
 // API key auth on mutating routes. If TAX_AGENT_API_KEY is not set, routes are open (dev mode).
 app.use('/validate', async (c, next) => {
   if (!c.env.TAX_AGENT_API_KEY) return next();
   return bearerAuth({ token: c.env.TAX_AGENT_API_KEY })(c, next);
 });
 app.use('/file', async (c, next) => {
+  if (!c.env.TAX_AGENT_API_KEY) return next();
+  return bearerAuth({ token: c.env.TAX_AGENT_API_KEY })(c, next);
+});
+app.use('/file/batch', async (c, next) => {
   if (!c.env.TAX_AGENT_API_KEY) return next();
   return bearerAuth({ token: c.env.TAX_AGENT_API_KEY })(c, next);
 });
@@ -129,6 +145,7 @@ app.get('/', (c) => {
     endpoints: {
       'POST /validate': 'Validate 1099-NEC data with AI (does not file)',
       'POST /file': 'Validate + create 1099-NEC in TaxBandits',
+      'POST /file/batch': 'Validate + create multiple 1099-NECs in one submission (max 100)',
       'POST /transmit/:submissionId': 'Transmit a submission to the IRS',
       'GET /status/:submissionId': 'Check filing status',
       'GET /health': 'Service health check',
@@ -183,7 +200,7 @@ app.post('/validate', async (c) => {
       {
         success: false,
         error: 'Validation failed',
-        details: err instanceof Error ? err.message : String(err),
+        details: scrubTINs(err instanceof Error ? err.message : String(err)),
       },
       500,
     );
@@ -252,7 +269,60 @@ app.post('/file', async (c) => {
       {
         success: false,
         error: 'TaxBandits API call failed',
-        details: { validation, taxbandits_error: err instanceof Error ? err.message : String(err) },
+        details: {
+          validation,
+          taxbandits_error: scrubTINs(err instanceof Error ? err.message : String(err)),
+        },
+      },
+      502,
+    );
+  }
+});
+
+/** POST /file/batch — Validate + create multiple 1099-NECs in one TaxBandits submission. */
+app.post('/file/batch', async (c) => {
+  const raw = await c.req.json().catch(() => null);
+  const schema = z.object({ forms: z.array(Form1099NECSchema).min(1).max(100) });
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    return c.json<ApiResponse<never>>(
+      { success: false, error: 'Invalid request body', details: parsed.error.flatten() },
+      400,
+    );
+  }
+  const forms = parsed.data.forms as Form1099NECRequest[];
+
+  // Validate all forms
+  const validations = await Promise.all(forms.map((f) => validateForm(c.env, f)));
+  const failed = validations.filter((v) => !v.valid);
+  if (failed.length > 0) {
+    return c.json<ApiResponse<{ validations: ValidationResult[] }>>(
+      {
+        success: false,
+        error: `${failed.length} of ${forms.length} forms failed validation`,
+        details: { validations },
+      },
+      422,
+    );
+  }
+
+  try {
+    const created = await createBatch1099NEC(c.env, forms);
+    return c.json<
+      ApiResponse<{ validations: ValidationResult[]; filing: TaxBanditsCreateResponse }>
+    >({
+      success: true,
+      data: { validations, filing: created },
+    });
+  } catch (err) {
+    return c.json<ApiResponse<{ validations: ValidationResult[] }>>(
+      {
+        success: false,
+        error: 'TaxBandits API call failed',
+        details: {
+          validations,
+          taxbandits_error: scrubTINs(err instanceof Error ? err.message : String(err)),
+        },
       },
       502,
     );
@@ -277,7 +347,7 @@ app.post('/transmit/:submissionId', async (c) => {
       {
         success: false,
         error: 'Transmit failed',
-        details: err instanceof Error ? err.message : String(err),
+        details: scrubTINs(err instanceof Error ? err.message : String(err)),
       },
       502,
     );
@@ -302,12 +372,15 @@ app.get('/status/:submissionId', async (c) => {
       {
         success: false,
         error: 'Status check failed',
-        details: err instanceof Error ? err.message : String(err),
+        details: scrubTINs(err instanceof Error ? err.message : String(err)),
       },
       502,
     );
   }
 });
+
+/** GET /openapi.json — OpenAPI 3.1 specification. */
+app.get('/openapi.json', (c) => c.json(openApiSpec));
 
 // ---------------------------------------------------------------------------
 // 404 / Error
@@ -325,7 +398,8 @@ app.onError((err, c) => {
     const message = status === 401 ? 'Unauthorized: invalid or missing Bearer token' : err.message;
     return c.json<ApiResponse<never>>({ success: false, error: message }, status);
   }
-  console.error('Unhandled error:', err);
+  const safeMessage = scrubTINs(err instanceof Error ? err.message : String(err));
+  console.error('Unhandled error:', safeMessage);
   return c.json<ApiResponse<never>>({ success: false, error: 'Internal server error' }, 500);
 });
 
