@@ -1,34 +1,18 @@
 # tax-agent
 
-AI-powered tax filing agent on Cloudflare Workers. Validates your data with Workers AI, files your return via [Column Tax](https://columntax.com).
+AI tax filing agent on Cloudflare Workers. Validates data with Workers AI, files returns through Column Tax.
 
-## Origin
-
-This started as a [conversation on X](https://x.com/nurodev) about AI agents and tax filing. [Ben (@nurodev)](https://github.com/nurodev) asked the question — _"But can it finally do my taxes for me?"_ — and [@grok](https://x.com/grok) drafted the first spec. This repo is that spec made real, built on current Cloudflare patterns.
-
-## How it works
+**Origin:** [Ben (@nurodev)](https://github.com/nurodev) asked _"But can it finally do my taxes for me?"_ — [@grok](https://x.com/grok) [drafted a spec](https://x.com/nurodev) — this repo makes it real.
 
 ```
-┌─────────┐     ┌───────────────────┐     ┌───────────────┐     ┌───────────┐
-│  Client  │────▶│  Cloudflare Worker │────▶│  Workers AI   │────▶│ Column Tax│
-│  (you)   │◀────│  (Hono router)     │◀────│  (Llama 3.3)  │◀────│   API     │
-└─────────┘     └───────────────────┘     └───────────────┘     └───────────┘
+You ──POST──▶ Worker ──validate──▶ Workers AI (Llama 3.3 70B)
+                │                         │
+                │◀── issues / ok ─────────┘
+                │
+                ├──file──▶ Column Tax API ──▶ IRS e-file
+                │               │
+                │◀── user_url ──┘  (open in browser to complete filing)
 ```
-
-1. **You POST tax data** (income, deductions, personal info)
-2. **Workers AI validates it** — structural checks first, then Llama 3.3 70B reviews for errors and inconsistencies
-3. **If valid, Column Tax takes over** — initializes a filing session, returns a URL to their white-label tax prep UI
-4. **User completes filing** in Column Tax's embedded experience (IRS-authorized e-file)
-
-## Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/` | API overview |
-| `GET` | `/health` | Service health (AI binding, credentials) |
-| `POST` | `/validate` | Validate tax data with AI (does not file) |
-| `POST` | `/file` | Validate + initialize Column Tax filing |
-| `GET` | `/status/:userId` | Check filing status |
 
 ## Quick start
 
@@ -36,40 +20,29 @@ This started as a [conversation on X](https://x.com/nurodev) about AI agents and
 git clone https://github.com/acoyfellow/tax-agent.git
 cd tax-agent
 npm install
+npm run dev          # starts on localhost:8787
 ```
 
-### Configure secrets
+`/validate` works immediately — it only needs the Workers AI binding.
 
-Column Tax credentials (get from [sales@columntax.com](mailto:sales@columntax.com)):
+`/file` requires Column Tax credentials. Email [sales@columntax.com](mailto:sales@columntax.com) for sandbox access, then:
 
 ```bash
+# either set secrets for deploy:
 npx wrangler secret put COLUMN_TAX_CLIENT_ID
 npx wrangler secret put COLUMN_TAX_CLIENT_SECRET
+
+# or for local dev, create .dev.vars:
+echo 'COLUMN_TAX_CLIENT_ID=xxx' >> .dev.vars
+echo 'COLUMN_TAX_CLIENT_SECRET=xxx' >> .dev.vars
 ```
 
-Or for local dev, edit `.dev.vars`:
+Deploy: `npm run deploy`
 
-```
-COLUMN_TAX_CLIENT_ID=your-sandbox-client-id
-COLUMN_TAX_CLIENT_SECRET=your-sandbox-client-secret
-```
-
-### Run locally
+## Validate tax data
 
 ```bash
-npm run dev
-```
-
-### Deploy
-
-```bash
-npm run deploy
-```
-
-## Example: validate tax data
-
-```bash
-curl -X POST http://localhost:8787/validate \
+curl -s http://localhost:8787/validate \
   -H 'Content-Type: application/json' \
   -d '{
     "taxpayer": {
@@ -93,10 +66,8 @@ curl -X POST http://localhost:8787/validate \
       "wages": 7500000,
       "federal_tax_withheld": 1500000
     }]
-  }'
+  }' | jq
 ```
-
-Response:
 
 ```json
 {
@@ -104,59 +75,65 @@ Response:
   "data": {
     "valid": true,
     "issues": [],
-    "summary": "All checks passed — data is ready for filing",
+    "summary": "All checks passed",
     "ai_model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
   }
 }
 ```
 
-## Example: file taxes
+Validation runs in two passes: structural checks (format, ranges, required fields) then Workers AI semantic review. If structural checks find errors, the AI call is skipped.
+
+## File a return
 
 ```bash
-curl -X POST http://localhost:8787/file \
+curl -s http://localhost:8787/file \
   -H 'Content-Type: application/json' \
-  -d '{ ... same body as above ... }'
+  -d '{ ... same body ... }' | jq
 ```
 
-Response includes a `user_url` — open it in a browser to complete filing in Column Tax's UI.
+If validation passes, this calls Column Tax's `initialize_tax_filing` endpoint and returns a `user_url`. Open that URL in a browser — Column Tax's white-label UI handles the rest of the filing flow (IRS-authorized e-file).
+
+If validation fails, you get a `422` with the issues. Fix and retry.
+
+## API reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | API overview |
+| `GET` | `/health` | Workers AI binding + credential status |
+| `POST` | `/validate` | Validate tax data (AI only, nothing sent to Column Tax) |
+| `POST` | `/file` | Validate → initialize Column Tax filing session |
+| `GET` | `/status/:userId` | Polling endpoint for filing status |
+
+All responses use `{ success: boolean, data?, error?, details? }`.
+
+Amounts are in **cents** (e.g., `7500000` = $75,000.00).
 
 ## Project structure
 
 ```
 src/
-├── index.ts        # Hono app — routes, middleware, error handling
-├── agent.ts        # AI validation (structural checks + Workers AI)
-├── column-tax.ts   # Column Tax API integration
-└── types.ts        # All TypeScript types
+├── index.ts        # Hono routes, middleware, error handling  (210 lines)
+├── agent.ts        # Structural + AI validation pipeline      (202 lines)
+├── column-tax.ts   # Column Tax API client                    (138 lines)
+└── types.ts        # All TypeScript types                     (163 lines)
 ```
 
-Four files. Read them top to bottom in ~5 minutes.
+713 lines total. Four files. Strict TypeScript, no `any`.
 
-## Stack
+Built on [Cloudflare Workers](https://developers.cloudflare.com/workers/) + [Workers AI](https://developers.cloudflare.com/workers-ai/) + [Hono](https://hono.dev) + [Column Tax](https://columntax.com/developers).
 
-- **[Cloudflare Workers](https://developers.cloudflare.com/workers/)** — runtime
-- **[Workers AI](https://developers.cloudflare.com/workers-ai/)** — Llama 3.3 70B for validation
-- **[Hono](https://hono.dev)** — lightweight router
-- **[Column Tax](https://columntax.com/developers)** — IRS-authorized tax filing API
-- **TypeScript** — strict mode, no `any`
+## Why Column Tax
 
-## Column Tax setup
+Column Tax is the only API that computes personal tax liability and e-files 1040s. TaxBandits handles information returns (1099, W-2) but not personal filing. Intuit has no TurboTax API. Column Tax is white-label, IRS-authorized, and requires just one API call — their embedded UI handles the interview, computation, and submission.
 
-Column Tax is the only API that actually computes personal tax liability and e-files 1040s. It's a white-label embedded experience — your backend calls one endpoint, their UI handles the rest.
-
-To get sandbox credentials:
-1. Email [sales@columntax.com](mailto:sales@columntax.com)
-2. They send you a `client_id` and `client_secret` for sandbox
-3. Set them as Wrangler secrets (see above)
-4. The `/file` endpoint will work end-to-end
-
-Without credentials, `/validate` still works — it only uses Workers AI.
+The tradeoff: signup is through [sales@columntax.com](mailto:sales@columntax.com), not self-serve.
 
 ## Credits
 
-- **[Ben (@nurodev)](https://github.com/nurodev)** — asked the question that started this: _"But can it finally do my taxes for me?"_
-- **[@grok](https://x.com/grok)** — drafted the first hypothetical spec using Workers AI SDK
-- **[Jordan (@acoyfellow)](https://github.com/acoyfellow)** — built the working implementation
+- **[Ben (@nurodev)](https://github.com/nurodev)** — sparked the idea
+- **[@grok](https://x.com/grok)** — drafted the first spec
+- **[Jordan (@acoyfellow)](https://github.com/acoyfellow)** — implementation
 
 ## License
 
