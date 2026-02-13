@@ -27,6 +27,13 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WebhookState"] }],
   "analytics_engine_datasets": [{ "binding": "AUDIT_LOG", "dataset": "tax_agent_audit" }],
+  "d1_databases": [
+    {
+      "binding": "AUTH_DB",
+      "database_name": "tax-agent-auth",
+      "database_id": "51251658-2604-45cd-b9cf-c2cfc2a15772"
+    }
+  ],
   // Secrets (set via wrangler secret put):
   // TAXBANDITS_CLIENT_ID
   // TAXBANDITS_CLIENT_SECRET
