@@ -1,0 +1,19 @@
+{
+  "name": "tax-agent",
+  "main": "src/index.ts",
+  "account_id": "bfcb6ac5b3ceaf42a09607f6f7925823",
+  "compatibility_date": "2025-02-13",
+  "routes": [
+    { "pattern": "tax-agent.coey.dev", "custom_domain": true }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "vars": {
+    "COLUMN_TAX_ENV": "sandbox",
+    "COLUMN_TAX_BASE_URL": "https://sandbox.columnapi.com"
+  }
+  // Set secrets via `wrangler secret put`:
+  // COLUMN_TAX_CLIENT_ID
+  // COLUMN_TAX_CLIENT_SECRET
+}

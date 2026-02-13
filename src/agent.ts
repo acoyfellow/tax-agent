@@ -7,39 +7,39 @@ const AI_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
  * We ask it to return JSON with specific fields.
  */
 function buildValidationPrompt(data: TaxFilingRequest): string {
-  return `You are a tax data validation assistant. Review the following tax filing data for errors, inconsistencies, or missing information. Respond ONLY with valid JSON matching this schema:
+  const totalWages = data.w2s?.reduce((sum, w) => sum + w.wages, 0) ?? 0;
+  const totalWithheld = data.w2s?.reduce((sum, w) => sum + w.federal_tax_withheld, 0) ?? 0;
+  const total1099 = data.income_1099s?.reduce((sum, i) => sum + i.amount, 0) ?? 0;
+  const totalScheduleC = data.schedule_c_businesses?.reduce((sum, b) => sum + b.gross_income - b.expenses, 0) ?? 0;
+  const totalIncome = (totalWages + total1099 + totalScheduleC) / 100;
 
-{
-  "valid": boolean,
-  "issues": [{ "field": "string", "message": "string", "severity": "error" | "warning" | "info" }],
-  "summary": "one-sentence summary"
-}
+  return `You are a tax data reviewer. Format and field validation has ALREADY PASSED — do NOT re-check SSN length, phone format, state codes, ZIP codes, or whether fields exist. Those are correct.
+
+Your job is ONLY to check for semantic issues a human tax preparer would catch:
+- Is the withholding ratio reasonable for the income level?
+- Does the occupation match the income sources (e.g., W-2 vs 1099)?
+- Are there any red flags the IRS would question?
+- Is anything inconsistent between the data points?
+
+If everything looks reasonable, return {"valid": true, "issues": [], "summary": "Data looks ready for filing"}
+
+If you find real issues, return {"valid": false, "issues": [{"field": "...", "message": "...", "severity": "warning"}], "summary": "..."}
+
+Use severity "warning" for things worth reviewing and "info" for suggestions. Never use "error" — that is reserved for the structural validator.
 
 Tax Filing Data:
 - Name: ${data.taxpayer.first_name} ${data.taxpayer.last_name}
-- SSN: ***-**-${data.taxpayer.social_security_number.slice(-4)}
 - DOB: ${data.taxpayer.date_of_birth}
 - Occupation: ${data.taxpayer.occupation}
-- Address: ${data.address.address}, ${data.address.city}, ${data.address.state} ${data.address.zip_code}
+- Location: ${data.address.city}, ${data.address.state}
 - Filing Year: ${data.filing_year ?? new Date().getFullYear()}
-${data.w2s?.length ? `- W-2s: ${data.w2s.length} form(s), total wages $${data.w2s.reduce((sum, w) => sum + w.wages, 0) / 100}` : '- W-2s: none'}
-${data.income_1099s?.length ? `- 1099s: ${data.income_1099s.length} form(s), total $${data.income_1099s.reduce((sum, i) => sum + i.amount, 0) / 100}` : '- 1099s: none'}
-${data.schedule_c_businesses?.length ? `- Schedule C: ${data.schedule_c_businesses.length} business(es)` : '- Schedule C: none'}
-${data.refund_bank_account ? '- Refund bank account: provided' : '- Refund bank account: not provided'}
+- Total Income: $${totalIncome.toLocaleString()}
+${data.w2s?.length ? `- W-2s: ${data.w2s.length} (wages $${(totalWages / 100).toLocaleString()}, withheld $${(totalWithheld / 100).toLocaleString()})` : '- W-2s: none'}
+${data.income_1099s?.length ? `- 1099s: ${data.income_1099s.length} (total $${(total1099 / 100).toLocaleString()})` : '- 1099s: none'}
+${data.schedule_c_businesses?.length ? `- Schedule C: ${data.schedule_c_businesses.length} (net $${(totalScheduleC / 100).toLocaleString()})` : '- Schedule C: none'}
+- Bank account for refund: ${data.refund_bank_account ? 'yes' : 'no'}
 
-Validate:
-1. SSN is 9 digits
-2. DOB makes the person at least 16 years old
-3. State is a valid 2-letter US state abbreviation
-4. ZIP code is 5 digits
-5. Phone is 10 digits
-6. At least one income source (W-2 or 1099 or Schedule C)
-7. Bank routing number is 9 digits (if provided)
-8. W-2 EINs are in XX-XXXXXXX format (if provided)
-9. All monetary amounts are non-negative
-10. Filing year is current or previous year
-
-Return ONLY the JSON object, no markdown, no explanation.`;
+Return ONLY valid JSON, no markdown fences, no explanation.`;
 }
 
 /**
@@ -121,14 +121,22 @@ function runStructuralValidations(data: TaxFilingRequest): ValidationIssue[] {
 /**
  * Parse the AI response, handling malformed JSON gracefully.
  */
-function parseAiResponse(raw: string): { issues: ValidationIssue[]; summary: string } {
+function parseAiResponse(raw: unknown): { issues: ValidationIssue[]; summary: string } {
+  const rawStr = typeof raw === 'string' ? raw : JSON.stringify(raw);
   try {
-    // Try to extract JSON from the response (AI might wrap it in markdown)
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch?.[0]) {
-      return { issues: [], summary: 'AI returned non-JSON response' };
+    let cleaned = rawStr.trim();
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+
+    // Try to extract the outermost JSON object
+    const start = cleaned.indexOf('{');
+    const end = cleaned.lastIndexOf('}');
+    if (start === -1 || end === -1 || end <= start) {
+      return { issues: [], summary: `AI returned non-JSON response: ${rawStr.slice(0, 100)}` };
     }
-    const parsed = JSON.parse(jsonMatch[0]) as {
+
+    const jsonStr = cleaned.slice(start, end + 1);
+    const parsed = JSON.parse(jsonStr) as {
+      valid?: boolean;
       issues?: Array<{ field?: string; message?: string; severity?: string }>;
       summary?: string;
     };
@@ -140,8 +148,8 @@ function parseAiResponse(raw: string): { issues: ValidationIssue[]; summary: str
         : 'warning',
     }));
     return { issues, summary: parsed.summary ?? 'Validation complete' };
-  } catch {
-    return { issues: [], summary: 'AI response could not be parsed' };
+  } catch (e) {
+    return { issues: [], summary: `AI parse error: ${e instanceof Error ? e.message : String(e)} | raw: ${rawStr.slice(0, 200)}` };
   }
 }
 
@@ -178,7 +186,10 @@ export async function validateTaxData(
       temperature: 0.1, // low temp for consistent structured output
     }) as { response?: string };
 
-    const aiResult = parseAiResponse(aiResponse.response ?? '');
+    const responseText = typeof aiResponse.response === 'string'
+      ? aiResponse.response
+      : JSON.stringify(aiResponse.response ?? aiResponse);
+    const aiResult = parseAiResponse(responseText);
 
     // Merge structural warnings with AI findings
     const allIssues = [...structuralIssues, ...aiResult.issues];
