@@ -27,7 +27,7 @@ import { rateLimiter } from './ratelimit';
 import { scrubTINs } from './pii';
 import { auditLogger } from './audit';
 import { verifyWebhookSignature, parseWebhookPayload } from './webhook';
-import { createAuth, verifyApiKey, getRequiredPermissions } from './auth';
+import { createAuth, verifyApiKey, getRequiredPermissions, migrateAuthDb } from './auth';
 
 // ---------------------------------------------------------------------------
 // Zod schemas — runtime validation for POST bodies
@@ -121,16 +121,24 @@ const PROTECTED_ROUTES = [
 ];
 
 for (const route of PROTECTED_ROUTES) {
-  const pattern = route.includes('/transmit') || route.includes('/status') || route === '/webhook/submissions'
-    ? `${route}/*`
-    : route;
+  const pattern =
+    route.includes('/transmit') || route.includes('/status') || route === '/webhook/submissions'
+      ? `${route}/*`
+      : route;
   // Exact match
   app.use(route, authMiddleware);
   // Wildcard sub-routes (e.g., /transmit/:id)
   if (pattern !== route) app.use(pattern, authMiddleware);
 }
 
-async function authMiddleware(c: { env: Env; req: { header: (name: string) => string | undefined; raw: Request }; set: (key: string, value: unknown) => void }, next: () => Promise<void>) {
+async function authMiddleware(
+  c: {
+    env: Env;
+    req: { header: (name: string) => string | undefined; raw: Request };
+    set: (key: string, value: unknown) => void;
+  },
+  next: () => Promise<void>,
+) {
   const hasLegacyKey = !!c.env.TAX_AGENT_API_KEY;
   // better-auth is active only when both AUTH_DB and BETTER_AUTH_SECRET are set
   const hasBetterAuth = !!c.env.AUTH_DB && !!c.env.BETTER_AUTH_SECRET;
@@ -149,7 +157,9 @@ async function authMiddleware(c: { env: Env; req: { header: (name: string) => st
       c.set('userId', result.userId);
       return next();
     }
-    throw new HTTPException(403, { message: result.error ?? 'Forbidden: insufficient permissions' });
+    throw new HTTPException(403, {
+      message: result.error ?? 'Forbidden: insufficient permissions',
+    });
   }
 
   // Check for Bearer token (legacy TAX_AGENT_API_KEY)
@@ -161,7 +171,9 @@ async function authMiddleware(c: { env: Env; req: { header: (name: string) => st
   }
 
   // No credentials provided
-  throw new HTTPException(401, { message: 'Unauthorized: provide x-api-key header or Bearer token' });
+  throw new HTTPException(401, {
+    message: 'Unauthorized: provide x-api-key header or Bearer token',
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -216,20 +228,8 @@ app.post('/api/auth/migrate', async (c) => {
       throw new HTTPException(401, { message: 'Admin auth required for migrations' });
     }
   }
-  const { getMigrations } = await import('better-auth/db');
-  const auth = createAuth(c.env);
-  const { toBeCreated, toBeAdded, runMigrations } = await getMigrations(auth.options);
-  if (toBeCreated.length === 0 && toBeAdded.length === 0) {
-    return c.json({ success: true, data: { message: 'No migrations needed' } });
-  }
-  await runMigrations();
-  return c.json({
-    success: true,
-    data: {
-      created: toBeCreated.map((t: { table: string }) => t.table),
-      added: toBeAdded.map((t: { table: string }) => t.table),
-    },
-  });
+  await migrateAuthDb(c.env.AUTH_DB);
+  return c.json({ success: true, data: { message: 'Auth tables created/updated' } });
 });
 
 // ---------------------------------------------------------------------------
@@ -278,11 +278,12 @@ app.get('/health', async (c) => {
   }
 
   checks['taxbandits_env'] = c.env.TAXBANDITS_ENV ?? 'sandbox';
-  checks['auth'] = c.env.AUTH_DB && c.env.BETTER_AUTH_SECRET
-    ? 'better-auth (D1)'
-    : c.env.TAX_AGENT_API_KEY
-      ? 'legacy bearer'
-      : 'disabled (dev mode)';
+  checks['auth'] =
+    c.env.AUTH_DB && c.env.BETTER_AUTH_SECRET
+      ? 'better-auth (D1)'
+      : c.env.TAX_AGENT_API_KEY
+        ? 'legacy bearer'
+        : 'disabled (dev mode)';
 
   const healthy =
     checks['workers_ai'] === 'available' && checks['taxbandits_oauth'] === 'authenticated';
