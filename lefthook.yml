@@ -1,0 +1,9 @@
+pre-push:
+  parallel: true
+  commands:
+    typecheck:
+      run: npx tsc --noEmit
+    lint:
+      run: npx prettier --check 'src/**/*.ts'
+    no-any:
+      run: sh -c '! grep -rnP ":\s*any\b|<any>|as any\b" src/ --include="*.ts" | grep -q .'

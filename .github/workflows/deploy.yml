@@ -5,17 +5,32 @@ on:
     branches: [main]
 
 jobs:
-  deploy:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx prettier --check 'src/**/*.ts'
+      - name: No TypeScript any
+        run: |
+          if grep -rnP ':\s*any\b|<any>|as any\b' src/ --include='*.ts'; then
+            echo '❌ Found explicit any — use specific types'
+            exit 1
+          fi
 
+  deploy:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
       - run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
