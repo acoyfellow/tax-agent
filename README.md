@@ -47,8 +47,14 @@ Deploy:
 npx wrangler secret put TAXBANDITS_CLIENT_ID
 npx wrangler secret put TAXBANDITS_CLIENT_SECRET
 npx wrangler secret put TAXBANDITS_USER_TOKEN
-npx wrangler secret put TAX_AGENT_API_KEY   # Bearer token for API auth
+npx wrangler secret put TAX_AGENT_API_KEY      # Legacy Bearer token (optional)
+npx wrangler secret put BETTER_AUTH_SECRET     # better-auth signing secret (32+ chars)
+npx wrangler secret put BETTER_AUTH_URL        # e.g., https://tax-agent.coey.dev
 npm run deploy
+
+# Run D1 migrations (once after first deploy)
+curl -X POST https://tax-agent.coey.dev/api/auth/migrate \
+  -H 'Authorization: Bearer YOUR_ADMIN_KEY'
 ```
 
 ## Validate a 1099-NEC
@@ -168,21 +174,67 @@ Error types flow through the type system via `Data.TaggedError`:
 - `TaxBanditsBusinessError` — TaxBandits rejected the request
 - `AIValidationError` — Workers AI unavailable
 
+## Authentication
+
+tax-agent supports two authentication modes, running simultaneously:
+
+### 1. better-auth API keys (recommended)
+
+Scoped, per-user API keys via [better-auth](https://better-auth.com) with D1 storage.
+
+```bash
+# 1. Run migrations (once after deploy)
+curl -X POST https://tax-agent.coey.dev/api/auth/migrate \
+  -H 'Authorization: Bearer $ADMIN_KEY'
+
+# 2. Create an account
+curl -X POST https://tax-agent.coey.dev/api/auth/sign-up/email \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@co.com","password":"...","name":"Your Name"}'
+
+# 3. Create an API key with scoped permissions
+curl -X POST https://tax-agent.coey.dev/api/auth/api-key/create \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"prod-key","permissions":{"filings":["validate","create","transmit"],"status":["read"],"webhooks":["read"]}}'
+
+# 4. Use the key
+curl https://tax-agent.coey.dev/validate \
+  -H 'x-api-key: YOUR_KEY' \
+  -H 'Content-Type: application/json' \
+  -d '{...}'
+```
+
+**Permissions model:**
+
+| Scope      | Actions                    | Routes                           |
+| ---------- | -------------------------- | -------------------------------- |
+| `filings`  | `validate`, `create`, `transmit` | `/validate`, `/file`, `/transmit/*` |
+| `status`   | `read`                     | `/status/*`                      |
+| `webhooks` | `read`                     | `/webhook/submissions*`          |
+
+### 2. Legacy Bearer token
+
+Set `TAX_AGENT_API_KEY` as a Cloudflare secret. All protected routes accept `Authorization: Bearer <token>`.
+
+If neither `BETTER_AUTH_SECRET` + `AUTH_DB` nor `TAX_AGENT_API_KEY` is configured, the API runs in open dev mode.
+
 ## API reference
 
-| Method | Path                       | Auth   | Description                                             |
-| ------ | -------------------------- | ------ | ------------------------------------------------------- |
-| `GET`  | `/`                        | No     | API overview                                            |
-| `GET`  | `/health`                  | No     | Workers AI + TaxBandits OAuth status                    |
-| `POST` | `/validate`                | Bearer | Validate 1099-NEC (AI only, nothing sent to TaxBandits) |
-| `POST` | `/file`                    | Bearer | Validate → create 1099-NEC in TaxBandits                |
-| `POST` | `/file/batch`              | Bearer | Validate → create up to 100 1099-NECs in one submission |
-| `POST` | `/transmit/:submissionId`  | Bearer | Transmit to IRS                                         |
-| `GET`  | `/status/:submissionId`    | Bearer | Poll filing status                                      |
-| `GET`  | `/openapi.json`            | No     | OpenAPI 3.1 specification                               |
-| `POST` | `/webhook/status`          | HMAC   | TaxBandits webhook callback (status updates)            |
-| `GET`  | `/webhook/submissions`     | Bearer | List tracked submissions                                |
-| `GET`  | `/webhook/submissions/:id` | Bearer | Get single submission status                            |
+| Method | Path                       | Auth       | Description                                             |
+| ------ | -------------------------- | ---------- | ------------------------------------------------------- |
+| `GET`  | `/`                        | No         | API overview                                            |
+| `GET`  | `/health`                  | No         | Workers AI + TaxBandits OAuth status                    |
+| `POST` | `/validate`                | API key    | Validate 1099-NEC (AI only, nothing sent to TaxBandits) |
+| `POST` | `/file`                    | API key    | Validate → create 1099-NEC in TaxBandits                |
+| `POST` | `/file/batch`              | API key    | Validate → create up to 100 1099-NECs in one submission |
+| `POST` | `/transmit/:submissionId`  | API key    | Transmit to IRS                                         |
+| `GET`  | `/status/:submissionId`    | API key    | Poll filing status                                      |
+| `GET`  | `/openapi.json`            | No         | OpenAPI 3.1 specification                               |
+| `POST` | `/webhook/status`          | HMAC       | TaxBandits webhook callback (status updates)            |
+| `GET`  | `/webhook/submissions`     | API key    | List tracked submissions                                |
+| `GET`  | `/webhook/submissions/:id` | API key    | Get single submission status                            |
+| `*`    | `/api/auth/*`              | No/Session | better-auth handler (signup, signin, key CRUD)          |
+| `POST` | `/api/auth/migrate`        | Admin      | Run D1 schema migrations                                |
 
 All responses: `{ success: boolean, data?, error?, details? }`
 
@@ -194,6 +246,8 @@ Amounts are in **dollars** (e.g., `5000.00`). POST endpoints are rate-limited to
 src/
 ├── index.ts              # Hono routes, Zod schemas, auth middleware
 ├── index.test.ts         # 28 integration tests
+├── auth.ts               # better-auth + D1 config, API key verification, permissions
+├── auth.test.ts          # 19 auth tests (permissions, key CRUD, expiration)
 ├── agent.ts              # Structural + AI validation pipeline (Effect)
 ├── agent.test.ts         # 42 unit tests (pure functions)
 ├── taxbandits.ts         # TaxBandits API client (Effect, typed errors, auto-retry)
@@ -318,6 +372,7 @@ All secrets are stored in Cloudflare Workers secrets (encrypted at rest, never i
 | Secret                     | Rotation                                 | How                                                        |
 | -------------------------- | ---------------------------------------- | ---------------------------------------------------------- |
 | `TAX_AGENT_API_KEY`        | Every 90 days or on suspected compromise | `wrangler secret put TAX_AGENT_API_KEY` + update clients   |
+| `BETTER_AUTH_SECRET`       | Every 90 days                            | `wrangler secret put BETTER_AUTH_SECRET` (invalidates sessions) |
 | `TAXBANDITS_CLIENT_SECRET` | Per TaxBandits policy (annually)         | Regenerate in TaxBandits dashboard → `wrangler secret put` |
 | `TAXBANDITS_USER_TOKEN`    | Per TaxBandits policy                    | Regenerate in dashboard → `wrangler secret put`            |
 | `CLOUDFLARE_API_TOKEN`     | Every 90 days                            | Regenerate at dash.cloudflare.com → update GitHub secret   |

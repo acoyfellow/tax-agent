@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Enterprise auth: better-auth + D1** — multi-tenant API key management
+  - `better-auth` with Cloudflare D1 adapter (via `kysely-d1`)
+  - `apiKey()` plugin with scoped permissions: `filings:[validate,create,transmit]`, `status:[read]`, `webhooks:[read]`
+  - Auth handler mounted at `/api/auth/*` (signup, signin, API key CRUD)
+  - Migration endpoint at `POST /api/auth/migrate` (admin-only)
+  - Dual-mode auth middleware: `x-api-key` header (better-auth) + `Bearer` token (legacy)
+  - Backward compatible — legacy `TAX_AGENT_API_KEY` env var still works
+  - 19 new tests: permission model, key creation, verification, scoping, expiration
+  - OpenAPI spec updated with `ApiKeyAuth` security scheme
+
 ### Changed
 
 - Swapped AI model from Llama 3.1 8B to GLM-4.7-Flash (131K context, released 2026-02-13)
