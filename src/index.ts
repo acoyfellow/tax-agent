@@ -219,7 +219,12 @@ app.post('/api/auth/admin/create-key', async (c) => {
   if (token !== c.env.TAX_AGENT_API_KEY) {
     throw new HTTPException(401, { message: 'Admin auth required' });
   }
-  const body = await c.req.json<{ userId: string; name?: string; permissions?: Record<string, string[]>; expiresIn?: number }>();
+  const body = await c.req.json<{
+    userId: string;
+    name?: string;
+    permissions?: Record<string, string[]>;
+    expiresIn?: number;
+  }>();
   if (!body.userId) {
     return c.json({ error: 'userId is required' }, 400);
   }
