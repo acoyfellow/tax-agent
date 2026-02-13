@@ -39,12 +39,12 @@ function getOAuthUrl(env: Env): string {
 // ============================================================
 
 /** Base64url encode a string (no padding). */
-function base64url(input: string): string {
+export function base64url(input: string): string {
   return btoa(input).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 }
 
 /** Base64url encode raw bytes. */
-function base64urlBytes(bytes: Uint8Array): string {
+export function base64urlBytes(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) {
     binary += String.fromCharCode(byte);
@@ -56,7 +56,7 @@ function base64urlBytes(bytes: Uint8Array): string {
  * Build a JWS token signed with HMAC-SHA256.
  * TaxBandits uses this instead of standard OAuth2 client_credentials.
  */
-async function buildJWS(
+export async function buildJWS(
   clientId: string,
   clientSecret: string,
   userToken: string,
@@ -168,7 +168,7 @@ async function apiCall<T extends { StatusCode?: number; Errors?: TaxBanditsError
 // Transform our types → TaxBandits API format
 // ============================================================
 
-function buildCreateRequest(data: Form1099NECRequest): TaxBanditsCreateRequest {
+export function buildCreateRequest(data: Form1099NECRequest): TaxBanditsCreateRequest {
   const taxYear = data.tax_year ?? new Date().getFullYear().toString();
 
   return {
@@ -238,6 +238,82 @@ function buildCreateRequest(data: Form1099NECRequest): TaxBanditsCreateRequest {
   };
 }
 
+/**
+ * Build a TaxBandits create request for multiple recipients (batch filing).
+ * All recipients share the same payer, tax year, and filing options.
+ */
+export function buildBatchCreateRequest(forms: Form1099NECRequest[]): TaxBanditsCreateRequest {
+  const first = forms[0];
+  if (!first) throw new Error('At least one form is required');
+
+  const taxYear = first.tax_year ?? new Date().getFullYear().toString();
+  const hasStateFiling = forms.some((f) => f.is_state_filing);
+
+  return {
+    SubmissionManifest: {
+      TaxYear: taxYear,
+      IsFederalFiling: true,
+      IsStateFiling: hasStateFiling,
+      IsPostal: false,
+      IsOnlineAccess: false,
+    },
+    ReturnHeader: {
+      Business: {
+        BusinessNm: first.payer.name,
+        EINorSSN: first.payer.tin.replace(/-/g, ''),
+        IsEIN: (first.payer.tin_type ?? 'EIN') === 'EIN',
+        BusinessType: first.payer.business_type ?? 'LLC',
+        Phone: first.payer.phone.replace(/\D/g, ''),
+        Email: first.payer.email,
+        KindOfEmployer: first.kind_of_employer ?? 'NONEAPPLY',
+        KindOfPayer: first.kind_of_payer ?? 'REGULAR941',
+        IsBusinessTerminated: false,
+        IsForeignAddress: false,
+        USAddress: {
+          Address1: first.payer.address,
+          City: first.payer.city,
+          State: first.payer.state,
+          ZipCd: first.payer.zip_code,
+        },
+      },
+    },
+    ReturnData: forms.map((data) => ({
+      SequenceId: `seq-${crypto.randomUUID().slice(0, 8)}`,
+      Recipient: {
+        TINType: data.recipient.tin_type,
+        TIN: data.recipient.tin.replace(/-/g, ''),
+        FirstPayeeNm: `${data.recipient.first_name} ${data.recipient.last_name}`,
+        IsForeignAddress: false,
+        USAddress: {
+          Address1: data.recipient.address,
+          City: data.recipient.city,
+          State: data.recipient.state,
+          ZipCd: data.recipient.zip_code,
+        },
+      },
+      NECFormData: {
+        B1NEC: data.nonemployee_compensation.toFixed(2),
+        B4FedTaxWH: data.is_federal_tax_withheld
+          ? (data.federal_tax_withheld ?? 0).toFixed(2)
+          : undefined,
+        Is2ndTINnot: false,
+        IsDirectSales: false,
+        ...(data.is_state_filing && data.state
+          ? {
+              States: [
+                {
+                  StateCd: data.state,
+                  StateIncome: (data.state_income ?? data.nonemployee_compensation).toFixed(2),
+                  StateTaxWithheld: (data.state_tax_withheld ?? 0).toFixed(2),
+                },
+              ],
+            }
+          : {}),
+      },
+    })),
+  };
+}
+
 // ============================================================
 // Public API
 // ============================================================
@@ -257,6 +333,18 @@ export async function create1099NEC(
 /**
  * Transmit a submission to the IRS.
  */
+/**
+ * Create multiple 1099-NEC forms in a single TaxBandits submission.
+ * All forms must share the same payer. Max 100 per batch.
+ */
+export async function createBatch1099NEC(
+  env: Env,
+  forms: Form1099NECRequest[],
+): Promise<TaxBanditsCreateResponse> {
+  const body = buildBatchCreateRequest(forms);
+  return apiCall<TaxBanditsCreateResponse>(env, 'POST', '/Form1099NEC/Create', body);
+}
+
 export async function transmit(
   env: Env,
   submissionId: string,

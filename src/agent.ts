@@ -71,7 +71,7 @@ const VALID_STATES = new Set([
 /**
  * Truncate a string to a maximum length to prevent prompt injection via overly long inputs.
  */
-function truncate(str: string, max: number): string {
+export function truncate(str: string, max: number): string {
   return str.length > max ? str.slice(0, max) : str;
 }
 
@@ -79,7 +79,7 @@ function truncate(str: string, max: number): string {
  * Sanitize user-controlled string fields: truncate and escape angle brackets
  * so injected text cannot break out of <DATA> delimiters.
  */
-function sanitize(str: string, max: number): string {
+export function sanitize(str: string, max: number): string {
   return truncate(str, max).replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
@@ -90,7 +90,7 @@ function sanitize(str: string, max: number): string {
  * User-controlled fields are wrapped in <DATA>...</DATA> delimiters and
  * truncated to reasonable lengths to mitigate prompt injection.
  */
-function buildValidationPrompt(data: Form1099NECRequest): string {
+export function buildValidationPrompt(data: Form1099NECRequest): string {
   // Sanitize all user-controlled string inputs
   const payerName = sanitize(data.payer.name, 100);
   const payerAddress = sanitize(data.payer.address, 200);
@@ -142,7 +142,7 @@ Return ONLY valid JSON, no markdown fences, no explanation.`;
 /**
  * Structural validations that don't need AI.
  */
-function runStructuralValidations(data: Form1099NECRequest): ValidationIssue[] {
+export function runStructuralValidations(data: Form1099NECRequest): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
   // Payer TIN — format depends on tin_type
@@ -284,7 +284,7 @@ function runStructuralValidations(data: Form1099NECRequest): ValidationIssue[] {
 /**
  * Parse AI response, handling various output formats.
  */
-function parseAiResponse(raw: unknown): { issues: ValidationIssue[]; summary: string } {
+export function parseAiResponse(raw: unknown): { issues: ValidationIssue[]; summary: string } {
   const rawStr = typeof raw === 'string' ? raw : JSON.stringify(raw);
   try {
     let cleaned = rawStr.trim();
