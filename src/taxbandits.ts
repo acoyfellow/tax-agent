@@ -1,0 +1,233 @@
+import type {
+  Env,
+  Form1099NECRequest,
+  TaxBanditsTokenResponse,
+  TaxBanditsCreateRequest,
+  TaxBanditsCreateResponse,
+  TaxBanditsTransmitResponse,
+  TaxBanditsStatusResponse,
+} from './types';
+
+// ============================================================
+// Config
+// ============================================================
+
+const SANDBOX_API = 'https://testapi.taxbandits.com/v1.7.3';
+const SANDBOX_OAUTH = 'https://testoauth.expressauth.net/v2/tbsauth';
+const PROD_API = 'https://api.taxbandits.com/v1.7.3';
+const PROD_OAUTH = 'https://oauth.expressauth.net/v2/tbsauth';
+
+function getBaseUrl(env: Env): string {
+  return env.TAXBANDITS_ENV === 'production' ? PROD_API : SANDBOX_API;
+}
+
+function getOAuthUrl(env: Env): string {
+  return env.TAXBANDITS_ENV === 'production' ? PROD_OAUTH : SANDBOX_OAUTH;
+}
+
+// ============================================================
+// JWS / OAuth
+// ============================================================
+
+/** Base64url encode a string (no padding). */
+function base64url(input: string): string {
+  return btoa(input).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+/** Base64url encode raw bytes. */
+function base64urlBytes(bytes: Uint8Array): string {
+  let binary = '';
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+}
+
+/**
+ * Build a JWS token signed with HMAC-SHA256.
+ * TaxBandits uses this instead of standard OAuth2 client_credentials.
+ */
+async function buildJWS(
+  clientId: string,
+  clientSecret: string,
+  userToken: string,
+): Promise<string> {
+  const header = base64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const payload = base64url(
+    JSON.stringify({
+      iss: clientId,
+      sub: clientId,
+      aud: userToken,
+      iat: Math.floor(Date.now() / 1000),
+    }),
+  );
+
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(clientSecret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(`${header}.${payload}`));
+  const sig = base64urlBytes(new Uint8Array(signature));
+
+  return `${header}.${payload}.${sig}`;
+}
+
+/**
+ * Get an access token from TaxBandits OAuth.
+ * Note: header is "Authentication" (not "Authorization") and method is GET.
+ */
+export async function getAccessToken(env: Env): Promise<string> {
+  const jws = await buildJWS(
+    env.TAXBANDITS_CLIENT_ID,
+    env.TAXBANDITS_CLIENT_SECRET,
+    env.TAXBANDITS_USER_TOKEN,
+  );
+
+  const response = await fetch(getOAuthUrl(env), {
+    method: 'GET',
+    headers: { Authentication: jws },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`OAuth failed (${response.status}): ${text}`);
+  }
+
+  const data = (await response.json()) as TaxBanditsTokenResponse;
+  if (data.StatusCode !== 200) {
+    throw new Error(`OAuth error: ${data.StatusMessage} ${JSON.stringify(data.Errors)}`);
+  }
+
+  return data.AccessToken;
+}
+
+// ============================================================
+// API helpers
+// ============================================================
+
+async function apiCall<T>(env: Env, method: string, path: string, body?: unknown): Promise<T> {
+  const token = await getAccessToken(env);
+
+  const response = await fetch(`${getBaseUrl(env)}${path}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`TaxBandits API error (${response.status}): ${text}`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+// ============================================================
+// Transform our types → TaxBandits API format
+// ============================================================
+
+function buildCreateRequest(data: Form1099NECRequest): TaxBanditsCreateRequest {
+  const taxYear = data.tax_year ?? new Date().getFullYear().toString();
+
+  return {
+    SubmissionManifest: {
+      TaxYear: taxYear,
+      IsFederalFiling: true,
+      IsStateFiling: data.is_state_filing,
+      IsPostal: false,
+      IsOnlineAccess: false,
+    },
+    ReturnHeader: {
+      Business: {
+        BusinessNm: data.payer.name,
+        EINorSSN: data.payer.tin.replace('-', ''),
+        IsEIN: true,
+        BusinessType: 'ESTE', // Estate; also: CORP, SCORP, PART, TRUST, LLC, EXEMPT
+        Phone: data.payer.phone.replace(/\D/g, ''),
+        Email: data.payer.email,
+        KindOfEmployer: 'NONEAPPLY',
+        KindOfPayer: 'REGULAR941',
+        IsBusinessTerminated: false,
+        IsForeignAddress: false,
+        USAddress: {
+          Address1: data.payer.address,
+          City: data.payer.city,
+          State: data.payer.state,
+          ZipCd: data.payer.zip_code,
+        },
+      },
+    },
+    ReturnData: [
+      {
+        SequenceId: 'seq-001',
+        Recipient: {
+          TINType: data.recipient.tin_type,
+          TIN: data.recipient.tin.replace('-', ''),
+          FirstPayeeNm: `${data.recipient.first_name} ${data.recipient.last_name}`,
+          IsForeignAddress: false,
+          USAddress: {
+            Address1: data.recipient.address,
+            City: data.recipient.city,
+            State: data.recipient.state,
+            ZipCd: data.recipient.zip_code,
+          },
+        },
+        NECFormData: {
+          B1NEC: data.nonemployee_compensation.toFixed(2),
+          B4FedTaxWH: data.is_federal_tax_withheld
+            ? (data.federal_tax_withheld ?? 0).toFixed(2)
+            : undefined,
+          Is2ndTINnot: false,
+          IsDirectSales: false,
+        },
+      },
+    ],
+  };
+}
+
+// ============================================================
+// Public API
+// ============================================================
+
+/**
+ * Create a 1099-NEC form in TaxBandits.
+ * Returns a SubmissionId + RecordId for tracking.
+ */
+export async function create1099NEC(
+  env: Env,
+  data: Form1099NECRequest,
+): Promise<TaxBanditsCreateResponse> {
+  const body = buildCreateRequest(data);
+  return apiCall<TaxBanditsCreateResponse>(env, 'POST', '/Form1099NEC/Create', body);
+}
+
+/**
+ * Transmit a submission to the IRS.
+ */
+export async function transmit(
+  env: Env,
+  submissionId: string,
+): Promise<TaxBanditsTransmitResponse> {
+  return apiCall<TaxBanditsTransmitResponse>(env, 'POST', '/Form1099NEC/Transmit', {
+    SubmissionId: submissionId,
+  });
+}
+
+/**
+ * Check the filing status of a submission.
+ */
+export async function getStatus(env: Env, submissionId: string): Promise<TaxBanditsStatusResponse> {
+  return apiCall<TaxBanditsStatusResponse>(
+    env,
+    'GET',
+    `/Form1099NEC/Status?SubmissionId=${encodeURIComponent(submissionId)}`,
+  );
+}

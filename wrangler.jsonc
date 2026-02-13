@@ -10,10 +10,10 @@
     "binding": "AI"
   },
   "vars": {
-    "COLUMN_TAX_ENV": "sandbox",
-    "COLUMN_TAX_BASE_URL": "https://sandbox.columnapi.com"
+    "TAXBANDITS_ENV": "sandbox"
   }
-  // Set secrets via `wrangler secret put`:
-  // COLUMN_TAX_CLIENT_ID
-  // COLUMN_TAX_CLIENT_SECRET
+  // Secrets (set via wrangler secret put):
+  // TAXBANDITS_CLIENT_ID
+  // TAXBANDITS_CLIENT_SECRET
+  // TAXBANDITS_USER_TOKEN
 }

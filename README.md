@@ -1,17 +1,17 @@
 # tax-agent
 
-AI tax filing agent on Cloudflare Workers. Validates data with Workers AI, files returns through Column Tax.
+AI tax form agent on Cloudflare Workers. Validates 1099-NEC data with Workers AI, files with the IRS via TaxBandits.
 
 **Origin:** [Ben (@nurodev)](https://github.com/nurodev) asked _"But can it finally do my taxes for me?"_ — [@grok](https://x.com/grok) [drafted a spec](https://x.com/nurodev) — this repo makes it real.
 
 ```
-You ──POST──▶ Worker ──validate──▶ Workers AI (Llama 3.3 70B)
-                │                         │
-                │◀── issues / ok ─────────┘
-                │
-                ├──file──▶ Column Tax API ──▶ IRS e-file
-                │               │
-                │◀── user_url ──┘  (open in browser to complete filing)
+You ─POST─▶ Worker ─validate─▶ Workers AI (Llama 3.3 70B)
+               │                        │
+               │◀── issues / ok ────────┘
+               │
+               ├─create─▶ TaxBandits API ─▶ 1099-NEC created
+               ├─transmit─▶ TaxBandits ─▶ Filed with IRS
+               └─status─▶ TaxBandits ─▶ TRANSMITTED / ACCEPTED
 ```
 
 ## Quick start
@@ -20,114 +20,113 @@ You ──POST──▶ Worker ──validate──▶ Workers AI (Llama 3.3 70B
 git clone https://github.com/acoyfellow/tax-agent.git
 cd tax-agent
 npm install
+```
+
+Get TaxBandits sandbox credentials (free, self-serve): https://sandbox.taxbandits.com
+
+```bash
+# Local dev — create .dev.vars:
+cat > .dev.vars << EOF
+TAXBANDITS_CLIENT_ID=your-client-id
+TAXBANDITS_CLIENT_SECRET=your-client-secret
+TAXBANDITS_USER_TOKEN=your-user-token
+TAXBANDITS_ENV=sandbox
+EOF
+
 npm run dev          # starts on localhost:8787
 ```
 
-`/validate` works immediately — it only needs the Workers AI binding.
-
-`/file` requires Column Tax credentials. Email [sales@columntax.com](mailto:sales@columntax.com) for sandbox access, then:
+Deploy:
 
 ```bash
-# either set secrets for deploy:
-npx wrangler secret put COLUMN_TAX_CLIENT_ID
-npx wrangler secret put COLUMN_TAX_CLIENT_SECRET
-
-# or for local dev, create .dev.vars:
-echo 'COLUMN_TAX_CLIENT_ID=xxx' >> .dev.vars
-echo 'COLUMN_TAX_CLIENT_SECRET=xxx' >> .dev.vars
+npx wrangler secret put TAXBANDITS_CLIENT_ID
+npx wrangler secret put TAXBANDITS_CLIENT_SECRET
+npx wrangler secret put TAXBANDITS_USER_TOKEN
+npm run deploy
 ```
 
-Deploy: `npm run deploy`
-
-## Validate tax data
+## Validate a 1099-NEC
 
 ```bash
 curl -s http://localhost:8787/validate \
   -H 'Content-Type: application/json' \
   -d '{
-    "taxpayer": {
-      "first_name": "Susan",
-      "last_name": "Magnolia",
-      "date_of_birth": "1988-02-03",
-      "social_security_number": "123124321",
-      "occupation": "Detective",
+    "payer": {
+      "name": "Acme Corp",
+      "tin": "27-1234567",
+      "address": "100 Main St",
+      "city": "New York",
+      "state": "NY",
+      "zip_code": "10001",
       "phone": "2125551234",
-      "email": "susan@example.com"
+      "email": "payroll@acme.com"
     },
-    "address": {
-      "address": "2030 Pecan Street",
-      "city": "Las Vegas",
-      "state": "NV",
-      "zip_code": "89031"
+    "recipient": {
+      "first_name": "Jane",
+      "last_name": "Smith",
+      "tin": "412789654",
+      "tin_type": "SSN",
+      "address": "200 Oak Ave",
+      "city": "Austin",
+      "state": "TX",
+      "zip_code": "78701"
     },
-    "w2s": [{
-      "employer_name": "Acme Corp",
-      "employer_ein": "12-3456789",
-      "wages": 7500000,
-      "federal_tax_withheld": 1500000
-    }]
+    "nonemployee_compensation": 5000.00,
+    "is_federal_tax_withheld": false,
+    "is_state_filing": false,
+    "tax_year": "2024"
   }' | jq
 ```
 
-```json
-{
-  "success": true,
-  "data": {
-    "valid": true,
-    "issues": [],
-    "summary": "All checks passed",
-    "ai_model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
-  }
-}
-```
+Validation runs in two passes: structural checks (TIN format, state codes, amounts) then Workers AI semantic review (withholding ratios, red flags, consistency).
 
-Validation runs in two passes: structural checks (format, ranges, required fields) then Workers AI semantic review. If structural checks find errors, the AI call is skipped.
-
-## File a return
+## File with the IRS
 
 ```bash
-curl -s http://localhost:8787/file \
-  -H 'Content-Type: application/json' \
+# Step 1: Create the form
+curl -s http://localhost:8787/file -H 'Content-Type: application/json' \
   -d '{ ... same body ... }' | jq
+# Returns SubmissionId
+
+# Step 2: Transmit to IRS
+curl -s -X POST http://localhost:8787/transmit/SUBMISSION_ID | jq
+
+# Step 3: Check status
+curl -s http://localhost:8787/status/SUBMISSION_ID | jq
 ```
 
-If validation passes, this calls Column Tax's `initialize_tax_filing` endpoint and returns a `user_url`. Open that URL in a browser — Column Tax's white-label UI handles the rest of the filing flow (IRS-authorized e-file).
-
-If validation fails, you get a `422` with the issues. Fix and retry.
+The three-step flow (create → transmit → poll status) mirrors TaxBandits' own lifecycle. The form stays in `CREATED` until you explicitly transmit.
 
 ## API reference
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/` | API overview |
-| `GET` | `/health` | Workers AI binding + credential status |
-| `POST` | `/validate` | Validate tax data (AI only, nothing sent to Column Tax) |
-| `POST` | `/file` | Validate → initialize Column Tax filing session |
-| `GET` | `/status/:userId` | Polling endpoint for filing status |
+| `GET` | `/health` | Workers AI + TaxBandits OAuth status |
+| `POST` | `/validate` | Validate 1099-NEC (AI only, nothing sent to TaxBandits) |
+| `POST` | `/file` | Validate → create 1099-NEC in TaxBandits |
+| `POST` | `/transmit/:submissionId` | Transmit to IRS |
+| `GET` | `/status/:submissionId` | Poll filing status |
 
-All responses use `{ success: boolean, data?, error?, details? }`.
+All responses: `{ success: boolean, data?, error?, details? }`
 
-Amounts are in **cents** (e.g., `7500000` = $75,000.00).
+Amounts are in **dollars** (e.g., `5000.00`).
 
 ## Project structure
 
 ```
 src/
-├── index.ts        # Hono routes, middleware, error handling  (210 lines)
-├── agent.ts        # Structural + AI validation pipeline      (202 lines)
-├── column-tax.ts   # Column Tax API client                    (138 lines)
-└── types.ts        # All TypeScript types                     (163 lines)
+├── index.ts        # Hono routes, middleware, error handling
+├── agent.ts        # Structural + AI validation pipeline
+├── taxbandits.ts   # TaxBandits API client (JWS auth, CRUD)
+└── types.ts        # All TypeScript types
 ```
 
-713 lines total. Four files. Strict TypeScript, no `any`.
+Four files. Built on [Cloudflare Workers](https://developers.cloudflare.com/workers/) + [Workers AI](https://developers.cloudflare.com/workers-ai/) + [Hono](https://hono.dev) + [TaxBandits](https://developer.taxbandits.com).
 
-Built on [Cloudflare Workers](https://developers.cloudflare.com/workers/) + [Workers AI](https://developers.cloudflare.com/workers-ai/) + [Hono](https://hono.dev) + [Column Tax](https://columntax.com/developers).
+## Why TaxBandits
 
-## Why Column Tax
-
-Column Tax is the only API that computes personal tax liability and e-files 1040s. TaxBandits handles information returns (1099, W-2) but not personal filing. Intuit has no TurboTax API. Column Tax is white-label, IRS-authorized, and requires just one API call — their embedded UI handles the interview, computation, and submission.
-
-The tradeoff: signup is through [sales@columntax.com](mailto:sales@columntax.com), not self-serve.
+TaxBandits is the only tax API with self-serve sandbox signup, a real IRS e-file pipeline, and support for 1099-NEC/MISC/K, W-2, W-9, and 20+ other forms. Column Tax handles personal 1040s but requires a sales call. Intuit has no TurboTax API. TaxBandits gave us working credentials in 2 minutes.
 
 ## Credits
 

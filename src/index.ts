@@ -1,8 +1,16 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import type { Env, TaxFilingRequest, ApiResponse, ValidationResult, ColumnTaxInitResponse } from './types';
-import { validateTaxData } from './agent';
-import { initializeTaxFiling, getTaxReturnStatus } from './column-tax';
+import type {
+  Env,
+  Form1099NECRequest,
+  ApiResponse,
+  ValidationResult,
+  TaxBanditsCreateResponse,
+  TaxBanditsTransmitResponse,
+  TaxBanditsStatusResponse,
+} from './types';
+import { validateForm } from './agent';
+import { create1099NEC, transmit, getStatus, getAccessToken } from './taxbandits';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -17,17 +25,18 @@ app.use('*', cors());
 
 /**
  * GET /
- * Health check + API overview.
+ * API overview.
  */
 app.get('/', (c) => {
   return c.json({
     name: 'tax-agent',
-    version: '1.0.0',
-    description: 'AI-powered tax filing agent — validates data with Workers AI, files via Column Tax',
+    version: '2.0.0',
+    description: 'AI-powered tax form agent — validates with Workers AI, files via TaxBandits',
     endpoints: {
-      'POST /validate': 'Validate tax data with AI (does not file)',
-      'POST /file': 'Validate + initialize tax filing with Column Tax',
-      'GET /status/:userId': 'Check filing status for a user',
+      'POST /validate': 'Validate 1099-NEC data with AI (does not file)',
+      'POST /file': 'Validate + create 1099-NEC in TaxBandits',
+      'POST /transmit/:submissionId': 'Transmit a submission to the IRS',
+      'GET /status/:submissionId': 'Check filing status',
       'GET /health': 'Service health check',
     },
     docs: 'https://github.com/acoyfellow/tax-agent',
@@ -36,60 +45,59 @@ app.get('/', (c) => {
 
 /**
  * GET /health
- * Quick health check — verifies AI binding is available.
+ * Verifies AI binding and TaxBandits credentials.
  */
 app.get('/health', async (c) => {
   const checks: Record<string, string> = {};
 
-  // Check AI binding
-  try {
-    checks['workers_ai'] = c.env.AI ? 'available' : 'missing';
-  } catch {
-    checks['workers_ai'] = 'error';
+  // AI binding
+  checks['workers_ai'] = c.env.AI ? 'available' : 'missing';
+
+  // TaxBandits credentials
+  const hasCreds =
+    c.env.TAXBANDITS_CLIENT_ID && c.env.TAXBANDITS_CLIENT_SECRET && c.env.TAXBANDITS_USER_TOKEN;
+  checks['taxbandits_credentials'] = hasCreds ? 'configured' : 'missing';
+
+  // Test TaxBandits OAuth
+  if (hasCreds) {
+    try {
+      await getAccessToken(c.env);
+      checks['taxbandits_oauth'] = 'authenticated';
+    } catch (err) {
+      checks['taxbandits_oauth'] = `failed: ${err instanceof Error ? err.message : String(err)}`;
+    }
   }
 
-  // Check Column Tax credentials (existence only, don't call the API)
-  checks['column_tax_credentials'] =
-    c.env.COLUMN_TAX_CLIENT_ID && c.env.COLUMN_TAX_CLIENT_SECRET
-      ? 'configured'
-      : 'missing — set via wrangler secret put';
+  checks['taxbandits_env'] = c.env.TAXBANDITS_ENV ?? 'sandbox';
 
-  checks['column_tax_env'] = c.env.COLUMN_TAX_ENV ?? 'not set';
-
-  const healthy = checks['workers_ai'] === 'available';
+  const healthy =
+    checks['workers_ai'] === 'available' && checks['taxbandits_oauth'] === 'authenticated';
   return c.json({ healthy, checks }, healthy ? 200 : 503);
 });
 
 /**
  * POST /validate
- * Validate tax filing data using structural checks + Workers AI.
- * Does NOT send anything to Column Tax.
+ * Validate 1099-NEC data with structural checks + Workers AI.
+ * Does NOT create anything in TaxBandits.
  */
 app.post('/validate', async (c) => {
-  let body: TaxFilingRequest;
+  let body: Form1099NECRequest;
   try {
-    body = await c.req.json<TaxFilingRequest>();
+    body = await c.req.json<Form1099NECRequest>();
   } catch {
-    return c.json<ApiResponse<never>>(
-      { success: false, error: 'Invalid JSON body' },
-      400,
-    );
+    return c.json<ApiResponse<never>>({ success: false, error: 'Invalid JSON body' }, 400);
   }
 
-  // Basic shape check
-  if (!body.taxpayer || !body.address) {
+  if (!body.payer || !body.recipient) {
     return c.json<ApiResponse<never>>(
-      { success: false, error: 'Missing required fields: taxpayer, address' },
+      { success: false, error: 'Missing required fields: payer, recipient' },
       400,
     );
   }
 
   try {
-    const result = await validateTaxData(c.env, body);
-    return c.json<ApiResponse<ValidationResult>>({
-      success: true,
-      data: result,
-    });
+    const result = await validateForm(c.env, body);
+    return c.json<ApiResponse<ValidationResult>>({ success: true, data: result });
   } catch (err) {
     return c.json<ApiResponse<never>>(
       {
@@ -104,29 +112,26 @@ app.post('/validate', async (c) => {
 
 /**
  * POST /file
- * Full flow: validate with AI → if valid, initialize filing with Column Tax.
- * Returns the Column Tax user_url to open their tax prep UI.
+ * Validate → create 1099-NEC in TaxBandits.
+ * Returns SubmissionId + RecordId for tracking.
  */
 app.post('/file', async (c) => {
-  let body: TaxFilingRequest;
+  let body: Form1099NECRequest;
   try {
-    body = await c.req.json<TaxFilingRequest>();
+    body = await c.req.json<Form1099NECRequest>();
   } catch {
-    return c.json<ApiResponse<never>>(
-      { success: false, error: 'Invalid JSON body' },
-      400,
-    );
+    return c.json<ApiResponse<never>>({ success: false, error: 'Invalid JSON body' }, 400);
   }
 
-  if (!body.taxpayer || !body.address) {
+  if (!body.payer || !body.recipient) {
     return c.json<ApiResponse<never>>(
-      { success: false, error: 'Missing required fields: taxpayer, address' },
+      { success: false, error: 'Missing required fields: payer, recipient' },
       400,
     );
   }
 
   // Step 1: Validate
-  const validation = await validateTaxData(c.env, body);
+  const validation = await validateForm(c.env, body);
   if (!validation.valid) {
     return c.json<ApiResponse<{ validation: ValidationResult }>>(
       {
@@ -138,23 +143,19 @@ app.post('/file', async (c) => {
     );
   }
 
-  // Step 2: Initialize Column Tax filing
+  // Step 2: Create in TaxBandits
   try {
-    const filing = await initializeTaxFiling(c.env, body);
-
-    return c.json<ApiResponse<{ validation: ValidationResult; filing: ColumnTaxInitResponse }>>({
+    const created = await create1099NEC(c.env, body);
+    return c.json<ApiResponse<{ validation: ValidationResult; filing: TaxBanditsCreateResponse }>>({
       success: true,
-      data: { validation, filing },
+      data: { validation, filing: created },
     });
   } catch (err) {
     return c.json<ApiResponse<{ validation: ValidationResult }>>(
       {
         success: false,
-        error: 'Column Tax API call failed',
-        details: {
-          validation,
-          column_tax_error: err instanceof Error ? err.message : String(err),
-        },
+        error: 'TaxBandits API call failed',
+        details: { validation, taxbandits_error: err instanceof Error ? err.message : String(err) },
       },
       502,
     );
@@ -162,23 +163,42 @@ app.post('/file', async (c) => {
 });
 
 /**
- * GET /status/:userId
- * Check the filing status for a given user.
+ * POST /transmit/:submissionId
+ * Transmit a created submission to the IRS.
  */
-app.get('/status/:userId', async (c) => {
-  const userId = c.req.param('userId');
+app.post('/transmit/:submissionId', async (c) => {
+  const submissionId = c.req.param('submissionId');
 
   try {
-    const status = await getTaxReturnStatus(c.env, userId);
-    return c.json<ApiResponse<typeof status>>({
-      success: true,
-      data: status,
-    });
+    const result = await transmit(c.env, submissionId);
+    return c.json<ApiResponse<TaxBanditsTransmitResponse>>({ success: true, data: result });
   } catch (err) {
     return c.json<ApiResponse<never>>(
       {
         success: false,
-        error: 'Failed to fetch status',
+        error: 'Transmit failed',
+        details: err instanceof Error ? err.message : String(err),
+      },
+      502,
+    );
+  }
+});
+
+/**
+ * GET /status/:submissionId
+ * Check the filing status of a submission.
+ */
+app.get('/status/:submissionId', async (c) => {
+  const submissionId = c.req.param('submissionId');
+
+  try {
+    const status = await getStatus(c.env, submissionId);
+    return c.json<ApiResponse<TaxBanditsStatusResponse>>({ success: true, data: status });
+  } catch (err) {
+    return c.json<ApiResponse<never>>(
+      {
+        success: false,
+        error: 'Status check failed',
         details: err instanceof Error ? err.message : String(err),
       },
       502,
@@ -187,7 +207,7 @@ app.get('/status/:userId', async (c) => {
 });
 
 // ---------------------------------------------------------------------------
-// 404 fallback
+// 404 / Error
 // ---------------------------------------------------------------------------
 app.notFound((c) => {
   return c.json<ApiResponse<never>>(
@@ -196,15 +216,9 @@ app.notFound((c) => {
   );
 });
 
-// ---------------------------------------------------------------------------
-// Error handler
-// ---------------------------------------------------------------------------
 app.onError((err, c) => {
   console.error('Unhandled error:', err);
-  return c.json<ApiResponse<never>>(
-    { success: false, error: 'Internal server error' },
-    500,
-  );
+  return c.json<ApiResponse<never>>({ success: false, error: 'Internal server error' }, 500);
 });
 
 export default app;
