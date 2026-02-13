@@ -163,7 +163,7 @@ export const openApiSpec: Record<string, unknown> = {
         in: 'header',
         name: 'x-api-key',
         description:
-          'better-auth API key with scoped permissions. Create keys via POST /api/auth/sign-up/email + POST /api/auth/api-key/create.',
+          'better-auth API key with scoped permissions. Create keys via POST /api/auth/sign-up/email + POST /api/auth/api-key/create (default permissions) or POST /api/auth/admin/create-key (custom permissions, admin-only).',
       },
     },
     schemas: {
