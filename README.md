@@ -87,6 +87,7 @@ curl -X POST https://tax-agent.coey.dev/api/auth/migrate \
 | `GET` | `/openapi.json` | No | OpenAPI 3.1 spec |
 | `POST` | `/webhook/status` | HMAC | TaxBandits callback |
 | `GET` | `/webhook/submissions` | 🔑 `webhooks:read` | List submissions |
+| `POST` | `/api/auth/admin/create-key` | Bearer (admin) | Create API key with custom permissions |
 | `*` | `/api/auth/*` | Varies | Auth handler (signup, keys) |
 
 Auth: `x-api-key` header (better-auth) or `Authorization: Bearer` (legacy). [Details →](docs/howto-authentication.md)
