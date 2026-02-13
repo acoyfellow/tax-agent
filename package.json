@@ -1,6 +1,6 @@
 {
   "name": "tax-agent",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "AI-powered tax form agent on Cloudflare Workers — validates with Workers AI, files via TaxBandits",
   "main": "src/index.ts",
   "scripts": {
