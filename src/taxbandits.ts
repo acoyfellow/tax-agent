@@ -8,7 +8,8 @@ import type {
   TaxBanditsTransmitResponse,
   TaxBanditsStatusResponse,
 } from './types';
-import { retryWithBackoff } from './retry';
+import { TaxBanditsAuthError, TaxBanditsTransientError, TaxBanditsBusinessError } from './types';
+import { Effect, Schedule } from 'effect';
 
 // ============================================================
 // Config
@@ -33,6 +34,30 @@ function getBaseUrl(env: Env): string {
 
 function getOAuthUrl(env: Env): string {
   return env.TAXBANDITS_ENV === 'production' ? PROD_OAUTH : SANDBOX_OAUTH;
+}
+
+// ============================================================
+// Effect retry & error helpers
+// ============================================================
+
+interface TaxBanditsResponse {
+  StatusCode?: number;
+  Errors?: TaxBanditsError[] | null;
+}
+
+const retryPolicy = Schedule.exponential('500 millis').pipe(
+  Schedule.intersect(Schedule.recurs(3)),
+  Schedule.jittered,
+);
+
+function classifyHttpError(
+  status: number,
+  body: string,
+): TaxBanditsAuthError | TaxBanditsTransientError {
+  if (status === 401 || status === 403) {
+    return new TaxBanditsAuthError({ message: `Auth failed (${status}): ${body}` });
+  }
+  return new TaxBanditsTransientError({ status, message: `HTTP ${status}: ${body}` });
 }
 
 // ============================================================
@@ -94,79 +119,138 @@ export async function buildJWS(
  * Note: header is "Authentication" (not "Authorization") and method is GET.
  * See: https://developer.taxbandits.com/docs/oauth2.0authentication/
  */
-export async function getAccessToken(env: Env): Promise<string> {
-  if (tokenCache && Date.now() < tokenCache.expiresAt) {
-    return tokenCache.token;
-  }
+export function getAccessToken(
+  env: Env,
+): Effect.Effect<string, TaxBanditsAuthError | TaxBanditsTransientError> {
+  return Effect.gen(function* () {
+    if (tokenCache && Date.now() < tokenCache.expiresAt) {
+      return tokenCache.token;
+    }
 
-  const jws = await buildJWS(
-    env.TAXBANDITS_CLIENT_ID,
-    env.TAXBANDITS_CLIENT_SECRET,
-    env.TAXBANDITS_USER_TOKEN,
-  );
+    const jws = yield* Effect.tryPromise({
+      try: () =>
+        buildJWS(env.TAXBANDITS_CLIENT_ID, env.TAXBANDITS_CLIENT_SECRET, env.TAXBANDITS_USER_TOKEN),
+      catch: (e) =>
+        new TaxBanditsTransientError({
+          status: 0,
+          message: `JWS build failed: ${e instanceof Error ? e.message : String(e)}`,
+        }),
+    });
 
-  const response = await retryWithBackoff(() =>
-    fetch(getOAuthUrl(env), {
-      method: 'GET',
-      headers: { Authentication: jws },
+    const response = yield* Effect.tryPromise({
+      try: () =>
+        fetch(getOAuthUrl(env), {
+          method: 'GET',
+          headers: { Authentication: jws },
+        }),
+      catch: (e) =>
+        new TaxBanditsTransientError({
+          status: 0,
+          message: `OAuth fetch failed: ${e instanceof Error ? e.message : String(e)}`,
+        }),
+    });
+
+    if (!response.ok) {
+      const text = yield* Effect.tryPromise({
+        try: () => response.text(),
+        catch: () =>
+          new TaxBanditsTransientError({
+            status: response.status,
+            message: `Failed to read OAuth error body`,
+          }),
+      });
+      return yield* Effect.fail(classifyHttpError(response.status, text));
+    }
+
+    const data = (yield* Effect.tryPromise({
+      try: () => response.json(),
+      catch: () =>
+        new TaxBanditsTransientError({ status: 0, message: 'Failed to parse OAuth JSON' }),
+    })) as TaxBanditsTokenResponse;
+
+    if (data.StatusCode !== 200) {
+      return yield* Effect.fail(
+        new TaxBanditsAuthError({
+          message: `OAuth error: ${data.StatusMessage} ${JSON.stringify(data.Errors)}`,
+        }),
+      );
+    }
+
+    tokenCache = {
+      token: data.AccessToken,
+      expiresAt: Date.now() + data.ExpiresIn * 1000 - TOKEN_BUFFER_MS,
+    };
+
+    return data.AccessToken;
+  }).pipe(
+    Effect.retry({
+      schedule: retryPolicy,
+      while: (e) => e._tag === 'TaxBanditsTransientError',
     }),
   );
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`OAuth failed (${response.status}): ${text}`);
-  }
-
-  const data = (await response.json()) as TaxBanditsTokenResponse;
-  if (data.StatusCode !== 200) {
-    throw new Error(`OAuth error: ${data.StatusMessage} ${JSON.stringify(data.Errors)}`);
-  }
-
-  tokenCache = {
-    token: data.AccessToken,
-    expiresAt: Date.now() + data.ExpiresIn * 1000 - TOKEN_BUFFER_MS,
-  };
-
-  return data.AccessToken;
 }
 
 // ============================================================
 // API helpers
 // ============================================================
 
-async function apiCall<T extends { StatusCode?: number; Errors?: TaxBanditsError[] | null }>(
+function apiCall<T extends TaxBanditsResponse>(
   env: Env,
   method: string,
   path: string,
   body?: unknown,
-): Promise<T> {
-  const token = await getAccessToken(env);
+): Effect.Effect<T, TaxBanditsAuthError | TaxBanditsTransientError | TaxBanditsBusinessError> {
+  return Effect.gen(function* () {
+    const token = yield* getAccessToken(env);
 
-  const response = await retryWithBackoff(() =>
-    fetch(`${getBaseUrl(env)}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: body ? JSON.stringify(body) : undefined,
+    const response = yield* Effect.tryPromise({
+      try: () =>
+        fetch(`${getBaseUrl(env)}${path}`, {
+          method,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: body ? JSON.stringify(body) : undefined,
+        }),
+      catch: (e) =>
+        new TaxBanditsTransientError({
+          status: 0,
+          message: `API fetch failed: ${e instanceof Error ? e.message : String(e)}`,
+        }),
+    });
+
+    if (!response.ok) {
+      const text = yield* Effect.tryPromise({
+        try: () => response.text(),
+        catch: () =>
+          new TaxBanditsTransientError({
+            status: response.status,
+            message: 'Failed to read API error body',
+          }),
+      });
+      return yield* Effect.fail(classifyHttpError(response.status, text));
+    }
+
+    const data = (yield* Effect.tryPromise({
+      try: () => response.json(),
+      catch: () => new TaxBanditsTransientError({ status: 0, message: 'Failed to parse API JSON' }),
+    })) as T;
+
+    // TaxBandits can return HTTP 200 with business-level errors
+    if (data.StatusCode && data.StatusCode >= 400) {
+      return yield* Effect.fail(
+        new TaxBanditsBusinessError({ statusCode: data.StatusCode, errors: data.Errors ?? [] }),
+      );
+    }
+
+    return data;
+  }).pipe(
+    Effect.retry({
+      schedule: retryPolicy,
+      while: (e) => e._tag === 'TaxBanditsTransientError',
     }),
   );
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`TaxBandits API error (${response.status}): ${text}`);
-  }
-
-  const data = (await response.json()) as T;
-
-  // TaxBandits can return HTTP 200 with business-level errors
-  if (data.StatusCode && data.StatusCode >= 400) {
-    const msgs = (data.Errors ?? []).map((e) => `${e.Id}: ${e.Message}`).join('; ');
-    throw new Error(`TaxBandits error (${data.StatusCode}): ${msgs || 'Unknown error'}`);
-  }
-
-  return data;
 }
 
 // ============================================================
@@ -327,33 +411,24 @@ export function buildBatchCreateRequest(forms: Form1099NECRequest[]): TaxBandits
  * Create a 1099-NEC form in TaxBandits.
  * Returns a SubmissionId + RecordId for tracking.
  */
-export async function create1099NEC(
-  env: Env,
-  data: Form1099NECRequest,
-): Promise<TaxBanditsCreateResponse> {
+export function create1099NEC(env: Env, data: Form1099NECRequest) {
   const body = buildCreateRequest(data);
+  return apiCall<TaxBanditsCreateResponse>(env, 'POST', '/Form1099NEC/Create', body);
+}
+
+/**
+ * Create multiple 1099-NEC forms in a single TaxBandits submission.
+ * All forms must share the same payer. Max 100 per batch.
+ */
+export function createBatch1099NEC(env: Env, forms: Form1099NECRequest[]) {
+  const body = buildBatchCreateRequest(forms);
   return apiCall<TaxBanditsCreateResponse>(env, 'POST', '/Form1099NEC/Create', body);
 }
 
 /**
  * Transmit a submission to the IRS.
  */
-/**
- * Create multiple 1099-NEC forms in a single TaxBandits submission.
- * All forms must share the same payer. Max 100 per batch.
- */
-export async function createBatch1099NEC(
-  env: Env,
-  forms: Form1099NECRequest[],
-): Promise<TaxBanditsCreateResponse> {
-  const body = buildBatchCreateRequest(forms);
-  return apiCall<TaxBanditsCreateResponse>(env, 'POST', '/Form1099NEC/Create', body);
-}
-
-export async function transmit(
-  env: Env,
-  submissionId: string,
-): Promise<TaxBanditsTransmitResponse> {
+export function transmit(env: Env, submissionId: string) {
   return apiCall<TaxBanditsTransmitResponse>(env, 'POST', '/Form1099NEC/Transmit', {
     SubmissionId: submissionId,
   });
@@ -362,7 +437,7 @@ export async function transmit(
 /**
  * Check the filing status of a submission.
  */
-export async function getStatus(env: Env, submissionId: string): Promise<TaxBanditsStatusResponse> {
+export function getStatus(env: Env, submissionId: string) {
   return apiCall<TaxBanditsStatusResponse>(
     env,
     'GET',

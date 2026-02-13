@@ -1,4 +1,6 @@
+import { Effect } from 'effect';
 import type { Env, Form1099NECRequest, ValidationResult, ValidationIssue } from './types';
+import { AIValidationError } from './types';
 
 // 8B is 3-5x faster and sufficient for JSON classification / form review.
 // Fallback: '@cf/meta/llama-3.3-70b-instruct-fp8-fast' if validation quality degrades.
@@ -322,34 +324,42 @@ export function parseAiResponse(raw: unknown): { issues: ValidationIssue[]; summ
 /**
  * Validate a 1099-NEC form using structural checks + Workers AI.
  */
-export async function validateForm(env: Env, data: Form1099NECRequest): Promise<ValidationResult> {
-  // 1. Structural validations (fast)
-  const structuralIssues = runStructuralValidations(data);
-  const hasErrors = structuralIssues.some((i) => i.severity === 'error');
+export function validateForm(
+  env: Env,
+  data: Form1099NECRequest,
+): Effect.Effect<ValidationResult, AIValidationError> {
+  return Effect.gen(function* () {
+    // 1. Structural validations (pure, synchronous)
+    const structuralIssues = runStructuralValidations(data);
+    const hasErrors = structuralIssues.some((i) => i.severity === 'error');
 
-  if (hasErrors) {
-    return {
-      valid: false,
-      issues: structuralIssues,
-      summary: `Found ${structuralIssues.length} structural issue(s) — fix these before AI review`,
-      ai_model: 'none (structural checks only)',
-    };
-  }
+    if (hasErrors) {
+      return {
+        valid: false,
+        issues: structuralIssues,
+        summary: `Found ${structuralIssues.length} structural issue(s) — fix these before AI review`,
+        ai_model: 'none (structural checks only)',
+      };
+    }
 
-  // 2. AI semantic review
-  try {
+    // 2. AI semantic review
     const prompt = buildValidationPrompt(data);
-    const aiResponse = (await env.AI.run(AI_MODEL, {
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a precise tax form validator. Return ONLY valid JSON.',
-        },
-        { role: 'user', content: prompt },
-      ],
-      max_tokens: 1024,
-      temperature: 0.1,
-    })) as { response?: string };
+    const aiResponse = yield* Effect.tryPromise({
+      try: () =>
+        env.AI.run(AI_MODEL, {
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a precise tax form validator. Return ONLY valid JSON.',
+            },
+            { role: 'user', content: prompt },
+          ],
+          max_tokens: 1024,
+          temperature: 0.1,
+        }) as Promise<{ response?: string }>,
+      catch: (err) =>
+        new AIValidationError({ message: err instanceof Error ? err.message : String(err) }),
+    });
 
     const responseText =
       typeof aiResponse.response === 'string'
@@ -361,21 +371,5 @@ export async function validateForm(env: Env, data: Form1099NECRequest): Promise<
     const valid = !allIssues.some((i) => i.severity === 'error');
 
     return { valid, issues: allIssues, summary: aiResult.summary, ai_model: AI_MODEL };
-  } catch (err) {
-    // Fail closed: AI unavailable = not valid. Tax filing should not
-    // proceed without semantic review.
-    return {
-      valid: false,
-      issues: [
-        ...structuralIssues,
-        {
-          field: 'ai_validation',
-          message: `AI review unavailable: ${err instanceof Error ? err.message : 'unknown error'}. Retry later.`,
-          severity: 'error' as const,
-        },
-      ],
-      summary: 'AI validation failed — cannot proceed without semantic review',
-      ai_model: `${AI_MODEL} (failed)`,
-    };
-  }
+  });
 }

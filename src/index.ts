@@ -4,6 +4,7 @@ import { bearerAuth } from 'hono/bearer-auth';
 import { bodyLimit } from 'hono/body-limit';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
+import { Effect } from 'effect';
 import type {
   Env,
   Form1099NECRequest,
@@ -13,7 +14,7 @@ import type {
   TaxBanditsTransmitResponse,
   TaxBanditsStatusResponse,
 } from './types';
-import { validateForm } from './agent';
+import { validateForm, runStructuralValidations } from './agent';
 import { openApiSpec } from './openapi';
 import {
   create1099NEC,
@@ -132,6 +133,24 @@ async function parseBody(c: { req: { json: () => Promise<unknown> } }) {
   return Form1099NECSchema.safeParse(raw);
 }
 
+/** Build a fallback ValidationResult when AI is unavailable, preserving structural issues. */
+function aiFallbackResult(data: Form1099NECRequest, errMessage: string): ValidationResult {
+  const structuralIssues = runStructuralValidations(data);
+  return {
+    valid: false,
+    issues: [
+      ...structuralIssues,
+      {
+        field: 'ai_validation',
+        message: `AI review unavailable: ${errMessage}. Retry later.`,
+        severity: 'error',
+      },
+    ],
+    summary: 'AI validation failed — cannot proceed without semantic review',
+    ai_model: '@cf/meta/llama-3.1-8b-instruct-fp8 (failed)',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
@@ -167,7 +186,7 @@ app.get('/health', async (c) => {
 
   if (hasCreds) {
     try {
-      await getAccessToken(c.env);
+      await Effect.runPromise(getAccessToken(c.env));
       checks['taxbandits_oauth'] = 'authenticated';
     } catch (err) {
       checks['taxbandits_oauth'] = `failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -192,19 +211,14 @@ app.post('/validate', async (c) => {
     );
   }
 
-  try {
-    const result = await validateForm(c.env, parsed.data as Form1099NECRequest);
-    return c.json<ApiResponse<ValidationResult>>({ success: true, data: result });
-  } catch (err) {
-    return c.json<ApiResponse<never>>(
-      {
-        success: false,
-        error: 'Validation failed',
-        details: scrubTINs(err instanceof Error ? err.message : String(err)),
-      },
-      500,
-    );
-  }
+  const formData = parsed.data as Form1099NECRequest;
+  const program = validateForm(c.env, formData).pipe(
+    Effect.catchTag('AIValidationError', (err) =>
+      Effect.succeed(aiFallbackResult(formData, err.message)),
+    ),
+  );
+  const result = await Effect.runPromise(program);
+  return c.json<ApiResponse<ValidationResult>>({ success: true, data: result });
 });
 
 /** Idempotency key TTL: 24 hours (in seconds). */
@@ -234,7 +248,13 @@ app.post('/file', async (c) => {
   }
   const body = parsed.data as Form1099NECRequest;
 
-  const validation = await validateForm(c.env, body);
+  const validationProgram = validateForm(c.env, body).pipe(
+    Effect.catchTag('AIValidationError', (err) =>
+      Effect.succeed(aiFallbackResult(body, err.message)),
+    ),
+  );
+  const validation = await Effect.runPromise(validationProgram);
+
   if (!validation.valid) {
     return c.json<ApiResponse<{ validation: ValidationResult }>>(
       {
@@ -246,37 +266,41 @@ app.post('/file', async (c) => {
     );
   }
 
-  try {
-    const created = await create1099NEC(c.env, body);
-    const responseBody: ApiResponse<{
-      validation: ValidationResult;
-      filing: TaxBanditsCreateResponse;
-    }> = {
-      success: true,
-      data: { validation, filing: created },
-    };
+  const filingProgram = create1099NEC(c.env, body).pipe(
+    Effect.map((created) => {
+      const responseBody: ApiResponse<{
+        validation: ValidationResult;
+        filing: TaxBanditsCreateResponse;
+      }> = {
+        success: true,
+        data: { validation, filing: created },
+      };
+      return { status: 200 as const, body: responseBody };
+    }),
+    Effect.catchAll((err) =>
+      Effect.succeed({
+        status: 502 as const,
+        body: {
+          success: false,
+          error: 'TaxBandits API call failed',
+          details: {
+            validation,
+            taxbandits_error: scrubTINs(err.message),
+          },
+        } as ApiResponse<{ validation: ValidationResult }>,
+      }),
+    ),
+  );
+  const result = await Effect.runPromise(filingProgram);
 
-    // Cache successful filing response for idempotency
-    if (idempotencyKey && kv) {
-      await kv.put(idempotencyKey, JSON.stringify({ status: 200, body: responseBody }), {
-        expirationTtl: IDEMPOTENCY_TTL,
-      });
-    }
-
-    return c.json(responseBody);
-  } catch (err) {
-    return c.json<ApiResponse<{ validation: ValidationResult }>>(
-      {
-        success: false,
-        error: 'TaxBandits API call failed',
-        details: {
-          validation,
-          taxbandits_error: scrubTINs(err instanceof Error ? err.message : String(err)),
-        },
-      },
-      502,
-    );
+  // Cache successful filing response for idempotency
+  if (result.status === 200 && idempotencyKey && kv) {
+    await kv.put(idempotencyKey, JSON.stringify({ status: 200, body: result.body }), {
+      expirationTtl: IDEMPOTENCY_TTL,
+    });
   }
+
+  return c.json(result.body, result.status);
 });
 
 /** POST /file/batch — Validate + create multiple 1099-NECs in one TaxBandits submission. */
@@ -293,7 +317,18 @@ app.post('/file/batch', async (c) => {
   const forms = parsed.data.forms as Form1099NECRequest[];
 
   // Validate all forms
-  const validations = await Promise.all(forms.map((f) => validateForm(c.env, f)));
+  const validationProgram = Effect.forEach(
+    forms,
+    (f) =>
+      validateForm(c.env, f).pipe(
+        Effect.catchTag('AIValidationError', (err) =>
+          Effect.succeed(aiFallbackResult(f, err.message)),
+        ),
+      ),
+    { concurrency: 'unbounded' },
+  );
+  const validations = await Effect.runPromise(validationProgram);
+
   const failed = validations.filter((v) => !v.valid);
   if (failed.length > 0) {
     return c.json<ApiResponse<{ validations: ValidationResult[] }>>(
@@ -306,27 +341,30 @@ app.post('/file/batch', async (c) => {
     );
   }
 
-  try {
-    const created = await createBatch1099NEC(c.env, forms);
-    return c.json<
-      ApiResponse<{ validations: ValidationResult[]; filing: TaxBanditsCreateResponse }>
-    >({
-      success: true,
-      data: { validations, filing: created },
-    });
-  } catch (err) {
-    return c.json<ApiResponse<{ validations: ValidationResult[] }>>(
-      {
-        success: false,
-        error: 'TaxBandits API call failed',
-        details: {
-          validations,
-          taxbandits_error: scrubTINs(err instanceof Error ? err.message : String(err)),
-        },
-      },
-      502,
-    );
-  }
+  const filingProgram = createBatch1099NEC(c.env, forms).pipe(
+    Effect.map((created) => ({
+      status: 200 as const,
+      body: {
+        success: true,
+        data: { validations, filing: created },
+      } as ApiResponse<{ validations: ValidationResult[]; filing: TaxBanditsCreateResponse }>,
+    })),
+    Effect.catchAll((err) =>
+      Effect.succeed({
+        status: 502 as const,
+        body: {
+          success: false,
+          error: 'TaxBandits API call failed',
+          details: {
+            validations,
+            taxbandits_error: scrubTINs(err.message),
+          },
+        } as ApiResponse<{ validations: ValidationResult[] }>,
+      }),
+    ),
+  );
+  const result = await Effect.runPromise(filingProgram);
+  return c.json(result.body, result.status);
 });
 
 /** POST /transmit/:submissionId — Transmit to the IRS. */
@@ -339,19 +377,24 @@ app.post('/transmit/:submissionId', async (c) => {
     );
   }
 
-  try {
-    const result = await transmit(c.env, idCheck.data);
-    return c.json<ApiResponse<TaxBanditsTransmitResponse>>({ success: true, data: result });
-  } catch (err) {
-    return c.json<ApiResponse<never>>(
-      {
-        success: false,
-        error: 'Transmit failed',
-        details: scrubTINs(err instanceof Error ? err.message : String(err)),
-      },
-      502,
-    );
-  }
+  const program = transmit(c.env, idCheck.data).pipe(
+    Effect.map((data) => ({
+      status: 200 as const,
+      body: { success: true, data } as ApiResponse<TaxBanditsTransmitResponse>,
+    })),
+    Effect.catchAll((err) =>
+      Effect.succeed({
+        status: 502 as const,
+        body: {
+          success: false,
+          error: 'Transmit failed',
+          details: scrubTINs(err.message),
+        } as ApiResponse<never>,
+      }),
+    ),
+  );
+  const result = await Effect.runPromise(program);
+  return c.json(result.body, result.status);
 });
 
 /** GET /status/:submissionId — Check filing status. */
@@ -364,19 +407,24 @@ app.get('/status/:submissionId', async (c) => {
     );
   }
 
-  try {
-    const status = await getStatus(c.env, idCheck.data);
-    return c.json<ApiResponse<TaxBanditsStatusResponse>>({ success: true, data: status });
-  } catch (err) {
-    return c.json<ApiResponse<never>>(
-      {
-        success: false,
-        error: 'Status check failed',
-        details: scrubTINs(err instanceof Error ? err.message : String(err)),
-      },
-      502,
-    );
-  }
+  const program = getStatus(c.env, idCheck.data).pipe(
+    Effect.map((data) => ({
+      status: 200 as const,
+      body: { success: true, data } as ApiResponse<TaxBanditsStatusResponse>,
+    })),
+    Effect.catchAll((err) =>
+      Effect.succeed({
+        status: 502 as const,
+        body: {
+          success: false,
+          error: 'Status check failed',
+          details: scrubTINs(err.message),
+        } as ApiResponse<never>,
+      }),
+    ),
+  );
+  const result = await Effect.runPromise(program);
+  return c.json(result.body, result.status);
 });
 
 /** GET /openapi.json — OpenAPI 3.1 specification. */

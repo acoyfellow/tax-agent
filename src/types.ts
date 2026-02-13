@@ -1,3 +1,5 @@
+import { Data } from 'effect';
+
 // ============================================================
 // Cloudflare Worker Environment
 // ============================================================
@@ -211,6 +213,36 @@ export interface TaxBanditsStatusResponse {
   }> | null;
   Errors: TaxBanditsError[] | null;
 }
+
+// ============================================================
+// Effect Error Types — typed error channel
+// ============================================================
+
+/** TaxBandits returned 401/403 — credentials are wrong, don't retry. */
+export class TaxBanditsAuthError extends Data.TaggedError('TaxBanditsAuthError')<{
+  readonly message: string;
+}> {}
+
+/** TaxBandits returned 429/5xx or network failed — safe to retry. */
+export class TaxBanditsTransientError extends Data.TaggedError('TaxBanditsTransientError')<{
+  readonly status: number;
+  readonly message: string;
+}> {}
+
+/** TaxBandits returned a business-level error (HTTP 200 but StatusCode >= 400). */
+export class TaxBanditsBusinessError extends Data.TaggedError('TaxBanditsBusinessError')<{
+  readonly statusCode: number;
+  readonly errors: TaxBanditsError[];
+}> {
+  get message(): string {
+    return this.errors.map((e) => `${e.Id}: ${e.Message}`).join('; ') || 'Unknown business error';
+  }
+}
+
+/** Workers AI call failed. */
+export class AIValidationError extends Data.TaggedError('AIValidationError')<{
+  readonly message: string;
+}> {}
 
 // ============================================================
 // API Response envelope
