@@ -99,14 +99,14 @@ The three-step flow (create → transmit → poll status) mirrors TaxBandits' ow
 
 ## API reference
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/` | API overview |
-| `GET` | `/health` | Workers AI + TaxBandits OAuth status |
-| `POST` | `/validate` | Validate 1099-NEC (AI only, nothing sent to TaxBandits) |
-| `POST` | `/file` | Validate → create 1099-NEC in TaxBandits |
-| `POST` | `/transmit/:submissionId` | Transmit to IRS |
-| `GET` | `/status/:submissionId` | Poll filing status |
+| Method | Path                      | Description                                             |
+| ------ | ------------------------- | ------------------------------------------------------- |
+| `GET`  | `/`                       | API overview                                            |
+| `GET`  | `/health`                 | Workers AI + TaxBandits OAuth status                    |
+| `POST` | `/validate`               | Validate 1099-NEC (AI only, nothing sent to TaxBandits) |
+| `POST` | `/file`                   | Validate → create 1099-NEC in TaxBandits                |
+| `POST` | `/transmit/:submissionId` | Transmit to IRS                                         |
+| `GET`  | `/status/:submissionId`   | Poll filing status                                      |
 
 All responses: `{ success: boolean, data?, error?, details? }`
 
@@ -133,7 +133,6 @@ TaxBandits is the only tax API with self-serve sandbox signup, a real IRS e-file
 - **Single recipient per request:** TaxBandits supports batch filing (multiple recipients per submission), but this API accepts only one recipient per `POST /file` request. To file for multiple recipients, make separate requests.
 - **US addresses only:** Both payer and recipient addresses are assumed to be US domestic. `IsForeignAddress` is hardcoded to `false`. Foreign addresses are not supported.
 - **Sandbox by default:** The TaxBandits integration defaults to sandbox mode (`TAXBANDITS_ENV=sandbox`). Set `TAXBANDITS_ENV=production` with valid production credentials for real IRS filings.
-- **Floating-point money amounts:** `nonemployee_compensation`, `federal_tax_withheld`, `state_income`, and `state_tax_withheld` are JavaScript `number` (IEEE 754 float). Values are rounded to 2 decimal places via `.toFixed(2)` before being sent to TaxBandits, which can introduce ±$0.01 discrepancies on certain inputs (e.g., `0.1 + 0.2`). For sub-cent precision, send values that are already exact in base-2 or use strings with exactly two decimal places.
 - **Floating-point money:** Amounts are JavaScript `number` (IEEE 754 doubles). Values are rounded to 2 decimal places with `.toFixed(2)` before sending to TaxBandits, which can cause ±$0.01 discrepancies for unusual inputs. For cent-perfect accuracy, send amounts that are already clean decimals (e.g., `5000.00`, not `5000.004`).
 
 ## Credits
