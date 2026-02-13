@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { bearerAuth } from 'hono/bearer-auth';
 import { bodyLimit } from 'hono/body-limit';
+import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import type {
   Env,
@@ -277,6 +278,11 @@ app.notFound((c) => {
 });
 
 app.onError((err, c) => {
+  if (err instanceof HTTPException) {
+    const status = err.status;
+    const message = status === 401 ? 'Unauthorized: invalid or missing Bearer token' : err.message;
+    return c.json<ApiResponse<never>>({ success: false, error: message }, status);
+  }
   console.error('Unhandled error:', err);
   return c.json<ApiResponse<never>>({ success: false, error: 'Internal server error' }, 500);
 });
