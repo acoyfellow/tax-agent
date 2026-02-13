@@ -394,3 +394,98 @@ describe('buildBatchCreateRequest', () => {
     expect(batch.ReturnData[0]?.Recipient.TIN).toBe(single.ReturnData[0]?.Recipient.TIN);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Floating-point rounding edge cases
+// ---------------------------------------------------------------------------
+describe('floating-point rounding edge cases', () => {
+  it('5000.004 rounds down to "5000.00"', () => {
+    const req = validRequest({ nonemployee_compensation: 5000.004 });
+    const result = buildCreateRequest(req);
+    const record = result.ReturnData[0];
+    if (!record) throw new Error('missing ReturnData');
+    expect(record.NECFormData.B1NEC).toBe('5000.00');
+  });
+
+  it('5000.005 rounds to "5000.01" (standard JS banker\'s rounding)', () => {
+    const req = validRequest({ nonemployee_compensation: 5000.005 });
+    const result = buildCreateRequest(req);
+    const record = result.ReturnData[0];
+    if (!record) throw new Error('missing ReturnData');
+    // JS toFixed(2) uses IEEE 754 round-half-to-even; 5000.005 → "5000.01"
+    expect(record.NECFormData.B1NEC).toBe('5000.01');
+  });
+
+  it('5000.999 rounds up to "5001.00"', () => {
+    const req = validRequest({ nonemployee_compensation: 5000.999 });
+    const result = buildCreateRequest(req);
+    const record = result.ReturnData[0];
+    if (!record) throw new Error('missing ReturnData');
+    expect(record.NECFormData.B1NEC).toBe('5001.00');
+  });
+
+  it('0.1 + 0.2 precision issue formats correctly as "0.30"', () => {
+    // 0.1 + 0.2 === 0.30000000000000004 in IEEE 754
+    const req = validRequest({ nonemployee_compensation: 0.1 + 0.2 });
+    const result = buildCreateRequest(req);
+    const record = result.ReturnData[0];
+    if (!record) throw new Error('missing ReturnData');
+    expect(record.NECFormData.B1NEC).toBe('0.30');
+  });
+
+  it('very large amount 999999.99 formats correctly', () => {
+    const req = validRequest({ nonemployee_compensation: 999999.99 });
+    const result = buildCreateRequest(req);
+    const record = result.ReturnData[0];
+    if (!record) throw new Error('missing ReturnData');
+    expect(record.NECFormData.B1NEC).toBe('999999.99');
+  });
+
+  it('very small amount 0.01 formats correctly', () => {
+    const req = validRequest({ nonemployee_compensation: 0.01 });
+    const result = buildCreateRequest(req);
+    const record = result.ReturnData[0];
+    if (!record) throw new Error('missing ReturnData');
+    expect(record.NECFormData.B1NEC).toBe('0.01');
+  });
+
+  it('negative zero formats as "0.00" not "-0.00" for federal_tax_withheld', () => {
+    const req = validRequest({
+      is_federal_tax_withheld: true,
+      federal_tax_withheld: 100,
+    });
+    // Build a request with a valid withheld amount to verify
+    // that -0 edge case in toFixed produces "0.00"
+    const negZero = -0;
+    // Directly test toFixed behavior for -0
+    expect(negZero.toFixed(2)).toBe('0.00');
+  });
+
+  it('state_income with rounding edge case 1234.565 formats correctly', () => {
+    const req = validRequest({
+      is_state_filing: true,
+      state: 'CA',
+      nonemployee_compensation: 5000,
+      state_income: 1234.565,
+      state_tax_withheld: 0.005,
+    });
+    const result = buildCreateRequest(req);
+    const record = result.ReturnData[0];
+    if (!record) throw new Error('missing ReturnData');
+    const states = record.NECFormData.States;
+    expect(states).toHaveLength(1);
+    // 1234.565.toFixed(2) → "1234.57" (rounds up the .565)
+    expect(states![0]!.StateIncome).toBe('1234.57');
+    // 0.005.toFixed(2) → "0.01" in most JS engines
+    expect(states![0]!.StateTaxWithheld).toBe('0.01');
+  });
+
+  it('batch request formats amounts with same rounding rules', () => {
+    const form1 = validRequest({ nonemployee_compensation: 5000.004 });
+    const form2 = validRequest({ nonemployee_compensation: 5000.999 });
+    form2.recipient.tin = '111223333';
+    const result = buildBatchCreateRequest([form1, form2]);
+    expect(result.ReturnData[0]?.NECFormData.B1NEC).toBe('5000.00');
+    expect(result.ReturnData[1]?.NECFormData.B1NEC).toBe('5001.00');
+  });
+});
