@@ -15,6 +15,7 @@
     "lint": "prettier --check 'src/**/*.ts'"
   },
   "dependencies": {
+    "effect": "^3.19.16",
     "hono": "^4.7.0",
     "zod": "^4.3.6"
   },

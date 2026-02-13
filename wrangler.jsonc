@@ -1,29 +1,26 @@
 {
   "name": "tax-agent",
   "main": "src/index.ts",
+  "minify": true,
   "account_id": "bfcb6ac5b3ceaf42a09607f6f7925823",
   "compatibility_date": "2025-02-13",
-  "routes": [
-    { "pattern": "tax-agent.coey.dev", "custom_domain": true }
-  ],
+  "routes": [{ "pattern": "tax-agent.coey.dev", "custom_domain": true }],
   "ai": {
-    "binding": "AI"
+    "binding": "AI",
   },
   "vars": {
-    "TAXBANDITS_ENV": "sandbox"
+    "TAXBANDITS_ENV": "sandbox",
   },
-  "kv_namespaces": [
-    { "binding": "IDEMPOTENCY_KV", "id": "10996d65b02a411c82047a9f62fcc631" }
-  ],
+  "kv_namespaces": [{ "binding": "IDEMPOTENCY_KV", "id": "10996d65b02a411c82047a9f62fcc631" }],
   "ratelimits": [
     {
       "name": "RATE_LIMITER",
       "namespace_id": "1001",
       "simple": {
         "limit": 20,
-        "period": 60
-      }
-    }
+        "period": 60,
+      },
+    },
   ],
   // Secrets (set via wrangler secret put):
   // TAXBANDITS_CLIENT_ID
