@@ -6,14 +6,45 @@ AI tax form agent on Cloudflare Workers. Validates 1099-NEC data with Workers AI
 
 - **Live:** https://tax-agent.coey.dev
 - **Repo:** https://github.com/acoyfellow/tax-agent
-- **Tests:** 151 unit + 10 live E2E (dashboard)
-- **Source:** 17 files, 4,253 lines, strict TypeScript, zero `any`
+- **Tests:** 170 unit + 10 live E2E (dashboard)
+- **Source:** 19 files, ~4,800 lines, strict TypeScript, zero `any`
 - **Bundle:** 160KB gzipped (minified)
 - **CI:** GitHub Actions — tsc + prettier + no-any gate → wrangler deploy
 
-## What was shipped this session
+## What was shipped this session (2026-02-13 — Enterprise Auth Sprint)
 
-### Effect Rewrite
+### Phase 1: better-auth + D1 Integration
+- Installed `better-auth` with `kysely-d1` D1 dialect (Cloudflare Workers compatible)
+- Created D1 database `tax-agent-auth` (id: `51251658-2604-45cd-b9cf-c2cfc2a15772`)
+- `src/auth.ts`: `createAuth()` per-request factory, `verifyApiKey()`, `getRequiredPermissions()`, `migrateAuthDb()`
+- `apiKey()` plugin with scoped permissions: `filings:[validate,create,transmit]`, `status:[read]`, `webhooks:[read]`
+- Auth handler mounted at `/api/auth/*` on Hono
+- Migration endpoint at `POST /api/auth/migrate` (admin-only, raw SQL — bypasses `getMigrations()` which calls `process.exit` in Workers)
+- Dual-mode auth middleware: `x-api-key` header (better-auth) + `Bearer` (legacy TAX_AGENT_API_KEY)
+- better-auth only activates when both `AUTH_DB` and `BETTER_AUTH_SECRET` are set
+- 19 new auth tests: permissions model, key creation, verification, scoping, expiration, helper function
+- OpenAPI spec updated with `ApiKeyAuth` security scheme
+- **170 total tests, all passing**
+
+### Docs: Diátaxis Restructure
+- README slimmed to gateway doc (120 lines vs 382)
+- `docs/tutorial-first-filing.md` — learning-oriented
+- `docs/howto-authentication.md` — task-oriented
+- `docs/howto-webhooks.md` — task-oriented
+- `docs/reference-api.md` — information-oriented
+- `docs/explanation-architecture.md` — understanding-oriented
+- `docs/explanation-security.md` — understanding-oriented
+- `docs/competitive-landscape.md` — feature matrix vs all competitors
+
+### Competitive Intel
+- **OSS landscape is empty** — zero mature open-source 1099 e-filing projects exist
+- **B2B paid:** TaxBandits (best for our use), Abound (gig economy), Tax1099 (bulk/UI-first)
+- **Not competitors:** Column Tax (consumer 1040s), Stripe Tax (sales tax only), Track1099 (acquired by Avalara)
+- **Our moat:** Only OSS option, only one with AI validation, edge-native, multi-tenant auth
+
+## What was shipped previously
+
+### Effect Rewrite (previous session)
 - `Data.TaggedError` for typed error channel (TaxBanditsAuthError, TaxBanditsTransientError, TaxBanditsBusinessError, AIValidationError)
 - `Effect.retry` + `Schedule.exponential.pipe(jittered)` replaces 112-line hand-rolled retry.ts (deleted)
 - `Effect.forEach` with concurrency for batch validation
@@ -38,7 +69,10 @@ env.RATE_LIMITER          — Cloudflare native rate limit (20/60s)
 env.IDEMPOTENCY_KV        — KV for idempotent POST /file
 env.WEBHOOK_STATE          — Durable Object (SQLite) for submission tracking
 env.AUDIT_LOG             — Analytics Engine dataset
+env.AUTH_DB               — D1 database (better-auth: users, keys, sessions)
 env.TAXBANDITS_ENV        — "sandbox" | "production"
+env.BETTER_AUTH_SECRET    — Signing secret for sessions/tokens
+env.BETTER_AUTH_URL       — Base URL for better-auth
 ```
 
 ## The Grok play
@@ -54,16 +88,9 @@ Grok pushed OAuth. Jordan says go enterprise. The play: **better-auth** gives us
 ### Reference starterkit: https://remote.coey.dev
 Jordan's own stack: SvelteKit + Better Auth + Durable Objects + D1. Tax-agent is Hono (not SvelteKit) but the better-auth + D1 + DO patterns transfer directly. Study this for integration patterns.
 
-### Phase 1: Multi-tenant API Keys (IMMEDIATE)
-- Install `better-auth` with D1 adapter
-- Mount auth handler at `/api/auth/*` on Hono (see https://www.better-auth.com/docs/integrations/hono)
-- Enable `apiKey()` plugin — scoped permissions, per-key rate limits, expiration, prefix
-- Create D1 database, run better-auth migrations
-- Replace single `TAX_AGENT_API_KEY` env var with per-user scoped keys
-- Permissions model: `{ filings: ["validate", "create", "transmit"], status: ["read"], webhooks: ["read"] }`
-- Update wrangler.jsonc with D1 binding
-- Update all auth middleware to verify via better-auth instead of simple bearer match
-- Tests for: key creation, key verification, permission scoping, key expiration, rate limits
+### Phase 1: Multi-tenant API Keys ✅ SHIPPED
+- better-auth + D1 + apiKey plugin — 19 tests, dual-mode middleware
+- See "What was shipped this session" above
 
 ### Phase 2: Organizations
 - Enable `organization()` plugin
@@ -118,7 +145,9 @@ curl -s https://tax-agent.coey.dev/health | jq .
 ## Key files
 
 ```
-src/index.ts              # Hono router, Zod schemas, auth, Effect.runPromise boundary
+src/index.ts              # Hono router, Zod schemas, dual-mode auth, Effect.runPromise boundary
+src/auth.ts               # better-auth + D1, API key verification, permissions, migration SQL
+src/auth.test.ts          # 19 auth tests
 src/agent.ts              # Structural + AI validation (Effect)
 src/taxbandits.ts         # TaxBandits API client (Effect, typed errors, auto-retry)
 src/webhook.ts            # Webhook HMAC verification + payload parsing
@@ -139,6 +168,23 @@ CHANGELOG.md              # Keep a Changelog format
 - TAXBANDITS_CLIENT_ID, TAXBANDITS_CLIENT_SECRET, TAXBANDITS_USER_TOKEN
 - TAX_AGENT_API_KEY (legacy Bearer auth — to be replaced by better-auth)
 - CLOUDFLARE_API_TOKEN (CI deploy)
+
+## Test Coverage Assessment (2026-02-13)
+
+170 tests. Test-to-source ratio: 0.95:1 (excluding openapi.ts). **Count is appropriate for a tax filing system handling PII and money.**
+
+**Strengths:** Excellent unit layer (agent, taxbandits, pii, auth pure functions). Every error path tested at HTTP level.
+
+**Gaps (next sprint):**
+- `webhook-state.ts` (80 LOC) — zero tests (Durable Object with SQL)
+- Happy-path HTTP: `POST /file`, `POST /file/batch`, `POST /transmit/:id` never tested with valid data
+- `GET /openapi.json` untested
+- Rate limiter window expiry untested
+- CORS headers untested
+
+**Redundancies to cut:** 1 duplicate floating-point test, 1 test that tests JavaScript itself (not project code), ~5 structural validation tests that duplicate agent.test.ts coverage.
+
+**Net recommendation:** Cut 7, add 15-20 → ~185 tests with dramatically better real-world coverage.
 
 ## Commit rules
 
