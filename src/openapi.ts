@@ -368,6 +368,42 @@ export const openApiSpec: Record<string, unknown> = {
       },
     },
 
+    // ------------------------------------------- POST /file/batch
+    '/file/batch': {
+      post: {
+        operationId: 'fileBatch',
+        summary: 'Validate + create up to 100 1099-NECs in one TaxBandits submission',
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['forms'],
+                properties: {
+                  forms: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 100,
+                    items: { $ref: '#/components/schemas/Form1099NECRequest' },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'All forms validated and filed successfully' },
+          '400': { description: 'Invalid request body' },
+          '401': { description: 'Unauthorized' },
+          '422': { description: 'One or more forms failed validation' },
+          '429': { description: 'Rate limit exceeded' },
+          '502': { description: 'TaxBandits API error' },
+        },
+      },
+    },
+
     // ------------------------------------------- POST /transmit/{submissionId}
     '/transmit/{submissionId}': {
       post: {
