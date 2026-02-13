@@ -55,6 +55,12 @@ const Form1099NECSchema = z.object({
     .string()
     .regex(/^\d{4}$/, 'Must be 4-digit year')
     .optional(),
+  kind_of_employer: z
+    .enum(['FEDERALGOVT', 'STATEGOVT', 'TRIBALGOVT', 'TAX_EXEMPT', 'NONEAPPLY'])
+    .default('NONEAPPLY'),
+  kind_of_payer: z
+    .enum(['REGULAR941', 'REGULAR944', 'AGRICULTURAL943', 'HOUSEHOLD', 'MILITARY', 'MEDICARE'])
+    .default('REGULAR941'),
 });
 
 const SubmissionIdSchema = z

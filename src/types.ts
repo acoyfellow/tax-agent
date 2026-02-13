@@ -40,6 +40,23 @@ export interface RecipientInfo {
   zip_code: string;
 }
 
+/** TaxBandits KindOfEmployer values */
+export type KindOfEmployer =
+  | 'FEDERALGOVT'
+  | 'STATEGOVT'
+  | 'TRIBALGOVT'
+  | 'TAX_EXEMPT'
+  | 'NONEAPPLY';
+
+/** TaxBandits KindOfPayer values */
+export type KindOfPayer =
+  | 'REGULAR941'
+  | 'REGULAR944'
+  | 'AGRICULTURAL943'
+  | 'HOUSEHOLD'
+  | 'MILITARY'
+  | 'MEDICARE';
+
 export interface Form1099NECRequest {
   payer: PayerInfo;
   recipient: RecipientInfo;
@@ -51,6 +68,8 @@ export interface Form1099NECRequest {
   state_income?: number;
   state_tax_withheld?: number;
   tax_year?: string; // defaults to current year
+  kind_of_employer?: KindOfEmployer; // defaults to 'NONEAPPLY'
+  kind_of_payer?: KindOfPayer; // defaults to 'REGULAR941'
 }
 
 // ============================================================

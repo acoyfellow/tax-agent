@@ -187,8 +187,8 @@ function buildCreateRequest(data: Form1099NECRequest): TaxBanditsCreateRequest {
         BusinessType: data.payer.business_type ?? 'LLC',
         Phone: data.payer.phone.replace(/\D/g, ''),
         Email: data.payer.email,
-        KindOfEmployer: 'NONEAPPLY',
-        KindOfPayer: 'REGULAR941',
+        KindOfEmployer: data.kind_of_employer ?? 'NONEAPPLY',
+        KindOfPayer: data.kind_of_payer ?? 'REGULAR941',
         IsBusinessTerminated: false,
         IsForeignAddress: false,
         USAddress: {
@@ -201,7 +201,7 @@ function buildCreateRequest(data: Form1099NECRequest): TaxBanditsCreateRequest {
     },
     ReturnData: [
       {
-        SequenceId: 'seq-001',
+        SequenceId: `seq-${crypto.randomUUID().slice(0, 8)}`,
         Recipient: {
           TINType: data.recipient.tin_type,
           TIN: data.recipient.tin.replace(/-/g, ''),
