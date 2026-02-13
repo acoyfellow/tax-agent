@@ -83,37 +83,37 @@ curl -s https://tax-agent.coey.dev/validate \
 12. ✅ .dev.vars.example + CONTRIBUTING.md
 13. ✅ Version aligned to 2.0.0
 
-## TODO — MEDIUM priority (do these next, in order)
+## DONE — MEDIUM priority (all 8 complete)
 
-### M1: AI prompt injection mitigation
+### M1: AI prompt injection mitigation ✔️
 In agent.ts `buildValidationPrompt()`: user-controlled fields (payer.name, recipient names, addresses) are interpolated directly into the AI prompt. A malicious payer name could inject instructions.
 **Fix:** Truncate all string inputs to reasonable lengths (name: 100 chars, address: 200 chars) before interpolation. Wrap user data in clear delimiters like `<DATA>...</DATA>` so the model can distinguish instructions from data.
 
-### M2: toLocaleString() locale-dependent
+### M2: ✅ toLocaleString() locale-dependent
 In agent.ts prompt builder: `data.nonemployee_compensation.toLocaleString()` — output format depends on V8 locale. On some runtimes `5000` becomes `5.000` (European) instead of `5,000`.
 **Fix:** Replace all `.toLocaleString()` calls in prompt builder with `.toFixed(2)` or explicit `toLocaleString('en-US')`.
 
-### M3: Payer TIN assumed to always be EIN
+### M3: ✅ Payer TIN assumed to always be EIN
 In types.ts: PayerInfo has `tin` but no `tin_type`. In taxbandits.ts: `IsEIN: true` is hardcoded. Sole proprietors filing 1099-NECs use SSN not EIN.
 **Fix:** Add `tin_type: 'EIN' | 'SSN'` to PayerInfo. Update Zod schema in index.ts. Wire `IsEIN` in taxbandits.ts to `data.payer.tin_type === 'EIN'`. Update TIN format validation in agent.ts to accept SSN format when tin_type is SSN.
 
-### M4: Document single-recipient limitation
+### M4: ✅ Document single-recipient limitation
 TaxBandits supports batch filing (multiple recipients per submission). Our API only accepts one recipient per request.
 **Fix:** Add a "Known limitations" section to README.md listing: single recipient per request, US addresses only, sandbox-only default.
 
-### M5: Document US-only address limitation
+### M5: ✅ Document US-only address limitation
 In taxbandits.ts: `IsForeignAddress: false` hardcoded for both payer and recipient.
 **Fix:** Document in README. Optionally add `is_foreign_address` boolean to types if you want to support it later.
 
-### M6: Idempotency key on /file
+### M6: ✅ Idempotency key on /file
 If a `/file` POST succeeds at TaxBandits but the response is lost (network timeout), retrying creates a duplicate IRS filing.
 **Fix:** Accept `Idempotency-Key` header on POST /file. Store in KV with the response. On retry with same key, return cached response. This needs a KV namespace binding in wrangler.jsonc.
 
-### M7: Float money math
+### M7: ✅ Float money math
 JavaScript: `0.1 + 0.2 = 0.30000000000000004`. `nonemployee_compensation` is a float. `.toFixed(2)` in taxbandits.ts rounds, which could create cent discrepancies.
 **Fix:** Either accept amounts as integer cents (breaking change) or as strings matching `/^\d+\.\d{2}$/` and pass through without float conversion. For now, document the limitation.
 
-### M8: Consider 8B model instead of 70B
+### M8: ✅ Consider 8B model instead of 70B
 The AI does JSON classification — 70B is overkill. `@cf/meta/llama-3.1-8b-instruct-fast` would be 3-5x faster.
 **Fix:** Test with 8B model. If validation quality is comparable, switch. Keep 70B as a comment fallback.
 
