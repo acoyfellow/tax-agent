@@ -27,6 +27,7 @@ const PayerSchema = z.object({
   zip_code: z.string().regex(/^\d{5}(-\d{4})?$/, 'ZIP must be 5 or 9 digits'),
   phone: z.string().min(10).max(15),
   email: z.string().email(),
+  business_type: z.enum(['CORP', 'SCORP', 'PART', 'TRUST', 'LLC', 'EXEMPT', 'ESTE']).default('LLC'),
 });
 
 const RecipientSchema = z.object({

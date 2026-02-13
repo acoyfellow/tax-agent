@@ -15,6 +15,8 @@ export interface Env {
 // Tax Form Data — what the user sends to our agent
 // ============================================================
 
+export type BusinessType = 'CORP' | 'SCORP' | 'PART' | 'TRUST' | 'LLC' | 'EXEMPT' | 'ESTE';
+
 export interface PayerInfo {
   name: string;
   tin: string; // EIN: XX-XXXXXXX
@@ -24,6 +26,7 @@ export interface PayerInfo {
   zip_code: string;
   phone: string;
   email: string;
+  business_type?: BusinessType; // defaults to 'LLC'
 }
 
 export interface RecipientInfo {

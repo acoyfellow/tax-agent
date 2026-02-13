@@ -184,7 +184,7 @@ function buildCreateRequest(data: Form1099NECRequest): TaxBanditsCreateRequest {
         BusinessNm: data.payer.name,
         EINorSSN: data.payer.tin.replace(/-/g, ''),
         IsEIN: true,
-        BusinessType: 'ESTE', // Estate; also: CORP, SCORP, PART, TRUST, LLC, EXEMPT
+        BusinessType: data.payer.business_type ?? 'LLC',
         Phone: data.payer.phone.replace(/\D/g, ''),
         Email: data.payer.email,
         KindOfEmployer: 'NONEAPPLY',
