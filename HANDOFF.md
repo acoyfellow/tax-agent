@@ -1,4 +1,4 @@
-# tax-agent — Sprint Handoff (2026-02-13)
+# tax-agent — Sprint Handoff (2026-02-14)
 
 ## What this is
 
@@ -11,7 +11,21 @@ AI tax form agent on Cloudflare Workers. Validates 1099-NEC data with Workers AI
 - **Bundle:** 160KB gzipped (minified)
 - **CI:** GitHub Actions — tsc + prettier + no-any gate → wrangler deploy
 
-## What was shipped this session (2026-02-13 — Enterprise Auth Sprint)
+## What was shipped this session (2026-02-14 — Production Auth Activation)
+
+### Production Activation
+- Set `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL` as wrangler secrets
+- Added `nodejs_compat` compatibility flag to `wrangler.jsonc` (required for better-auth's `node:async_hooks`)
+- Ran D1 migrations against production database via `wrangler d1 execute` (global API key auth)
+- Added `POST /api/auth/admin/create-key` endpoint for admin-managed keys with custom permissions
+  - Permissions can only be set server-side (better-auth design); client `/api/auth/api-key/create` uses defaults
+  - Admin endpoint requires legacy Bearer auth (`TAX_AGENT_API_KEY`)
+- Fixed auth docs: self-service vs admin key creation flows, Origin header requirement
+- **Verified full end-to-end in production:** signup → session → API key creation → `x-api-key` auth on `/validate`
+- Health check shows `"auth": "better-auth (D1)"` ✔️
+- **170 tests still passing**
+
+## What was shipped previously (2026-02-13 — Enterprise Auth Sprint)
 
 ### Phase 1: better-auth + D1 Integration
 - Installed `better-auth` with `kysely-d1` D1 dialect (Cloudflare Workers compatible)
