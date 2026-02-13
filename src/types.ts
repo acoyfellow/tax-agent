@@ -19,7 +19,8 @@ export type BusinessType = 'CORP' | 'SCORP' | 'PART' | 'TRUST' | 'LLC' | 'EXEMPT
 
 export interface PayerInfo {
   name: string;
-  tin: string; // EIN: XX-XXXXXXX
+  tin: string; // EIN: XX-XXXXXXX or SSN: XXX-XX-XXXX / 9 digits
+  tin_type?: 'EIN' | 'SSN'; // defaults to 'EIN'
   address: string;
   city: string;
   state: string; // 2-letter

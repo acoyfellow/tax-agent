@@ -183,7 +183,7 @@ function buildCreateRequest(data: Form1099NECRequest): TaxBanditsCreateRequest {
       Business: {
         BusinessNm: data.payer.name,
         EINorSSN: data.payer.tin.replace(/-/g, ''),
-        IsEIN: true,
+        IsEIN: (data.payer.tin_type ?? 'EIN') === 'EIN',
         BusinessType: data.payer.business_type ?? 'LLC',
         Phone: data.payer.phone.replace(/\D/g, ''),
         Email: data.payer.email,

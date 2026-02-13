@@ -91,10 +91,12 @@ function sanitize(str: string, max: number): string {
 function buildValidationPrompt(data: Form1099NECRequest): string {
   // Sanitize all user-controlled string inputs
   const payerName = sanitize(data.payer.name, 100);
+  const payerAddress = sanitize(data.payer.address, 200);
   const payerCity = sanitize(data.payer.city, 100);
   const payerState = sanitize(data.payer.state, 2);
   const recipientFirst = sanitize(data.recipient.first_name, 100);
   const recipientLast = sanitize(data.recipient.last_name, 100);
+  const recipientAddress = sanitize(data.recipient.address, 200);
   const recipientCity = sanitize(data.recipient.city, 100);
   const recipientState = sanitize(data.recipient.state, 2);
 

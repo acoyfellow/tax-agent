@@ -19,17 +19,31 @@ import { create1099NEC, transmit, getStatus, getAccessToken } from './taxbandits
 // ---------------------------------------------------------------------------
 // Zod schemas — runtime validation for POST bodies
 // ---------------------------------------------------------------------------
-const PayerSchema = z.object({
-  name: z.string().min(1).max(200),
-  tin: z.string().regex(/^\d{2}-\d{7}$/, 'EIN must be XX-XXXXXXX format'),
-  address: z.string().min(1).max(200),
-  city: z.string().min(1).max(100),
-  state: z.string().length(2),
-  zip_code: z.string().regex(/^\d{5}(-\d{4})?$/, 'ZIP must be 5 or 9 digits'),
-  phone: z.string().min(10).max(15),
-  email: z.string().email(),
-  business_type: z.enum(['CORP', 'SCORP', 'PART', 'TRUST', 'LLC', 'EXEMPT', 'ESTE']).default('LLC'),
-});
+const PayerSchema = z
+  .object({
+    name: z.string().min(1).max(200),
+    tin: z.string().min(9).max(11),
+    tin_type: z.enum(['EIN', 'SSN']).default('EIN'),
+    address: z.string().min(1).max(200),
+    city: z.string().min(1).max(100),
+    state: z.string().length(2),
+    zip_code: z.string().regex(/^\d{5}(-\d{4})?$/, 'ZIP must be 5 or 9 digits'),
+    phone: z.string().min(10).max(15),
+    email: z.string().email(),
+    business_type: z
+      .enum(['CORP', 'SCORP', 'PART', 'TRUST', 'LLC', 'EXEMPT', 'ESTE'])
+      .default('LLC'),
+  })
+  .refine(
+    (p) => {
+      if (p.tin_type === 'EIN') return /^\d{2}-\d{7}$/.test(p.tin);
+      return /^\d{9}$/.test(p.tin.replace(/-/g, ''));
+    },
+    {
+      message: 'EIN must be XX-XXXXXXX format; SSN must be 9 digits',
+      path: ['tin'],
+    },
+  );
 
 const RecipientSchema = z.object({
   first_name: z.string().min(1).max(100),
