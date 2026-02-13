@@ -237,3 +237,18 @@ The model is instructed to treat everything inside `<DATA>` as data to review, n
 ## License
 
 MIT
+
+## Secrets rotation policy
+
+All secrets are stored in Cloudflare Workers secrets (encrypted at rest, never in source). Rotate on this schedule:
+
+| Secret | Rotation | How |
+|--------|----------|-----|
+| `TAX_AGENT_API_KEY` | Every 90 days or on suspected compromise | `wrangler secret put TAX_AGENT_API_KEY` + update clients |
+| `TAXBANDITS_CLIENT_SECRET` | Per TaxBandits policy (annually) | Regenerate in TaxBandits dashboard → `wrangler secret put` |
+| `TAXBANDITS_USER_TOKEN` | Per TaxBandits policy | Regenerate in dashboard → `wrangler secret put` |
+| `CLOUDFLARE_API_TOKEN` | Every 90 days | Regenerate at dash.cloudflare.com → update GitHub secret |
+
+**On compromise:** Rotate ALL secrets immediately. Revoke the old TaxBandits credentials in their dashboard. Check `/status` for any unexpected transmissions.
+
+**Zero-downtime rotation:** Deploy new secret → verify with `/health` → revoke old credential. The worker picks up new secrets on next request (no restart needed).
