@@ -4,6 +4,7 @@
   "minify": true,
   "account_id": "bfcb6ac5b3ceaf42a09607f6f7925823",
   "compatibility_date": "2025-02-13",
+  "compatibility_flags": ["nodejs_compat"],
   "routes": [{ "pattern": "tax-agent.coey.dev", "custom_domain": true }],
   "ai": {
     "binding": "AI",
