@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>tax-agent — Dashboard</title>
+<style>
+  :root {
+    --bg: #0a0a0a; --card: #141414; --border: #262626; --text: #e5e5e5;
+    --muted: #737373; --accent: #22c55e; --accent-dim: #16a34a;
+    --red: #ef4444; --yellow: #eab308; --blue: #3b82f6;
+    --radius: 8px; --font: 'Inter', -apple-system, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 14px; line-height: 1.5; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px; }
+  header h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+  header h1 span { color: var(--muted); font-weight: 400; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; }
+  .badge.green { background: #052e16; color: #4ade80; }
+  .badge.red { background: #450a0a; color: #f87171; }
+  .badge.yellow { background: #422006; color: #facc15; }
+  .badge .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .badge.green .dot { background: #4ade80; }
+  .badge.red .dot { background: #f87171; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+  @media (max-width: 768px) { .grid, .grid-3 { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+  .card h2 { font-size: 13px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
+  .card h3 { font-size: 13px; font-weight: 500; color: var(--muted); margin-bottom: 8px; }
+  .stat { font-size: 32px; font-weight: 700; letter-spacing: -0.03em; }
+  .stat.green { color: var(--accent); }
+  .stat.red { color: var(--red); }
+  .stat.blue { color: var(--blue); }
+  .stat-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .checks { display: flex; flex-direction: column; gap: 8px; }
+  .check-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: #0a0a0a; border-radius: 6px; }
+  .check-row .label { font-size: 13px; }
+  .check-row .value { font-size: 13px; font-weight: 500; }
+  .check-row .value.ok { color: var(--accent); }
+  .check-row .value.fail { color: var(--red); }
+  .section-title { font-size: 16px; font-weight: 600; margin-bottom: 16px; letter-spacing: -0.01em; }
+  form { display: flex; flex-direction: column; gap: 12px; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 768px) { .form-row { grid-template-columns: 1fr; } }
+  label { font-size: 12px; color: var(--muted); margin-bottom: 4px; display: block; }
+  input, select { width: 100%; padding: 8px 12px; background: #0a0a0a; border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 13px; font-family: var(--font); outline: none; transition: border-color 0.15s; }
+  input:focus, select:focus { border-color: var(--accent); }
+  input::placeholder { color: #525252; }
+  button { padding: 10px 20px; background: var(--accent); color: #000; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; font-family: var(--font); cursor: pointer; transition: background 0.15s; }
+  button:hover { background: var(--accent-dim); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-secondary { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { background: var(--card); }
+  .result { margin-top: 16px; padding: 16px; border-radius: 6px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 400px; overflow-y: auto; }
+  .result.success { background: #052e16; border: 1px solid #16a34a; color: #bbf7d0; }
+  .result.error { background: #450a0a; border: 1px solid #dc2626; color: #fecaca; }
+  .result.info { background: #0c1929; border: 1px solid #1e40af; color: #bfdbfe; }
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+  .tab { padding: 8px 16px; font-size: 13px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; transition: all 0.15s; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+  .submissions-table { width: 100%; border-collapse: collapse; }
+  .submissions-table th { font-size: 11px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .submissions-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .submissions-table tr:last-child td { border-bottom: none; }
+  .status-pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .status-pill.accepted { background: #052e16; color: #4ade80; }
+  .status-pill.rejected { background: #450a0a; color: #f87171; }
+  .status-pill.created { background: #1a1a2e; color: #818cf8; }
+  .status-pill.partial { background: #422006; color: #facc15; }
+  .empty-state { text-align: center; padding: 40px; color: var(--muted); }
+  .footer { text-align: center; padding: 24px; color: var(--muted); font-size: 12px; margin-top: 32px; border-top: 1px solid var(--border); }
+  .footer a { color: var(--accent); text-decoration: none; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #333; border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .api-key-bar { display: flex; gap: 8px; margin-bottom: 24px; }
+  .api-key-bar input { flex: 1; }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>tax-agent <span>dashboard</span></h1>
+    <div id="health-badge" class="badge yellow"><span class="dot"></span> checking...</div>
+  </header>
+
+  <div class="api-key-bar">
+    <input type="password" id="api-key" placeholder="Bearer API key (required for filing)" autocomplete="off">
+    <button onclick="saveKey()" class="btn-secondary">Save</button>
+  </div>
+
+  <div class="grid-3" id="stats">
+    <div class="card"><h2>AI Model</h2><div class="stat blue" style="font-size:18px" id="ai-model">—</div><div class="stat-label">Workers AI</div></div>
+    <div class="card"><h2>Environment</h2><div class="stat" style="font-size:18px" id="tb-env">—</div><div class="stat-label">TaxBandits</div></div>
+    <div class="card"><h2>Latency</h2><div class="stat green" id="latency">—</div><div class="stat-label">health check ms</div></div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Service Health</h2>
+      <div class="checks" id="health-checks"><div class="check-row"><span class="label">Loading...</span></div></div>
+    </div>
+    <div class="card">
+      <h2>API Endpoints</h2>
+      <div class="checks" id="endpoints"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:24px">
+    <div class="tabs">
+      <div class="tab active" data-tab="validate">Validate</div>
+      <div class="tab" data-tab="file">File</div>
+      <div class="tab" data-tab="submissions">Submissions</div>
+      <div class="tab" data-tab="e2e">E2E Tests</div>
+    </div>
+
+    <div id="tab-validate" class="tab-content active">
+      <h3>Validate a 1099-NEC</h3>
+      <form id="validate-form" onsubmit="return handleValidate(event)">
+        <div class="section-title" style="font-size:13px;color:var(--muted);margin-top:8px">Payer</div>
+        <div class="form-row">
+          <div><label>Business Name</label><input name="payer_name" value="Acme Corp" required></div>
+          <div><label>EIN</label><input name="payer_tin" value="27-1234567" required></div>
+        </div>
+        <div class="form-row">
+          <div><label>Address</label><input name="payer_address" value="100 Main St" required></div>
+          <div><label>City</label><input name="payer_city" value="New York" required></div>
+        </div>
+        <div class="form-row">
+          <div><label>State</label><input name="payer_state" value="NY" maxlength="2" required></div>
+          <div><label>ZIP</label><input name="payer_zip" value="10001" required></div>
+        </div>
+        <div class="form-row">
+          <div><label>Phone</label><input name="payer_phone" value="2125551234" required></div>
+          <div><label>Email</label><input name="payer_email" value="payroll@acme.com" type="email" required></div>
+        </div>
+
+        <div class="section-title" style="font-size:13px;color:var(--muted);margin-top:16px">Recipient</div>
+        <div class="form-row">
+          <div><label>First Name</label><input name="recip_first" value="Jane" required></div>
+          <div><label>Last Name</label><input name="recip_last" value="Smith" required></div>
+        </div>
+        <div class="form-row">
+          <div><label>SSN (9 digits)</label><input name="recip_tin" value="412789654" required></div>
+          <div><label>TIN Type</label><select name="recip_tin_type"><option value="SSN" selected>SSN</option><option value="EIN">EIN</option></select></div>
+        </div>
+        <div class="form-row">
+          <div><label>Address</label><input name="recip_address" value="200 Oak Ave" required></div>
+          <div><label>City</label><input name="recip_city" value="Austin" required></div>
+        </div>
+        <div class="form-row">
+          <div><label>State</label><input name="recip_state" value="TX" maxlength="2" required></div>
+          <div><label>ZIP</label><input name="recip_zip" value="78701" required></div>
+        </div>
+
+        <div class="section-title" style="font-size:13px;color:var(--muted);margin-top:16px">Compensation</div>
+        <div class="form-row">
+          <div><label>Amount ($)</label><input name="amount" type="number" step="0.01" value="5000.00" required></div>
+          <div><label>Tax Year</label><input name="tax_year" value="2025"></div>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button type="submit" id="validate-btn">Validate with AI</button>
+          <button type="button" class="btn-secondary" onclick="fillSample()">Reset to Sample</button>
+        </div>
+      </form>
+      <div id="validate-result"></div>
+    </div>
+
+    <div id="tab-file" class="tab-content">
+      <h3>File with IRS</h3>
+      <p style="color:var(--muted);margin-bottom:16px">Uses the same form data from the Validate tab. Validates first, then creates the 1099-NEC in TaxBandits.</p>
+      <div style="display:flex;gap:8px">
+        <button onclick="handleFile()" id="file-btn">Create 1099-NEC</button>
+        <button onclick="handleTransmit()" class="btn-secondary" id="transmit-btn" disabled>Transmit to IRS</button>
+        <button onclick="handleStatus()" class="btn-secondary" id="status-btn" disabled>Check Status</button>
+      </div>
+      <div id="file-result"></div>
+    </div>
+
+    <div id="tab-submissions" class="tab-content">
+      <h3>Webhook Submissions</h3>
+      <p style="color:var(--muted);margin-bottom:16px">Submissions tracked via TaxBandits webhook callbacks.</p>
+      <button onclick="loadSubmissions()" class="btn-secondary" style="margin-bottom:16px">Refresh</button>
+      <div id="submissions-list"><div class="empty-state">Click Refresh to load submissions</div></div>
+    </div>
+    <div id="tab-e2e" class="tab-content">
+      <h3>End-to-End API Tests</h3>
+      <p style="color:var(--muted);margin-bottom:16px">Hits the live API. Requires a valid Bearer key for auth-protected routes.</p>
+      <button onclick="runE2E()" id="e2e-btn">Run All Tests</button>
+      <div id="e2e-results" style="margin-top:16px"></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Powered by <a href="https://github.com/acoyfellow/tax-agent">tax-agent</a> · 
+    <a href="https://effect.website">Effect</a> · 
+    <a href="https://developers.cloudflare.com/workers/">Cloudflare Workers</a> · 
+    GLM-4.7-Flash
+  </div>
+</div>
+
+<script>
+const API = 'https://tax-agent.coey.dev';
+let lastSubmissionId = null;
+
+function getKey() { return document.getElementById('api-key').value || localStorage.getItem('tax-agent-key') || ''; }
+function saveKey() { localStorage.setItem('tax-agent-key', document.getElementById('api-key').value); }
+function authHeaders() { const k = getKey(); return k ? { 'Authorization': `Bearer ${k}` } : {}; }
+
+// Tabs
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  document.getElementById('tab-' + t.dataset.tab).classList.add('active');
+}));
+
+// Health check
+async function checkHealth() {
+  const badge = document.getElementById('health-badge');
+  try {
+    const start = performance.now();
+    const res = await fetch(API + '/health');
+    const ms = Math.round(performance.now() - start);
+    const data = await res.json();
+    document.getElementById('latency').textContent = ms + 'ms';
+    badge.className = 'badge ' + (data.healthy ? 'green' : 'red');
+    badge.innerHTML = '<span class="dot"></span> ' + (data.healthy ? 'healthy' : 'unhealthy');
+    
+    const checks = document.getElementById('health-checks');
+    checks.innerHTML = Object.entries(data.checks).map(([k, v]) => {
+      const ok = v === 'available' || v === 'configured' || v === 'authenticated' || v === 'enabled';
+      return `<div class="check-row"><span class="label">${k.replace(/_/g, ' ')}</span><span class="value ${ok ? 'ok' : 'fail'}">${v}</span></div>`;
+    }).join('');
+
+    if (data.checks.taxbandits_env) document.getElementById('tb-env').textContent = data.checks.taxbandits_env;
+    document.getElementById('ai-model').textContent = 'GLM-4.7-Flash';
+  } catch(e) {
+    badge.className = 'badge red';
+    badge.innerHTML = '<span class="dot"></span> offline';
+  }
+}
+
+// Endpoints
+async function loadEndpoints() {
+  try {
+    const res = await fetch(API + '/');
+    const data = await res.json();
+    const el = document.getElementById('endpoints');
+    el.innerHTML = Object.entries(data.endpoints).map(([k, v]) => {
+      const [method, path] = k.split(' ');
+      const color = method === 'POST' ? 'var(--yellow)' : method === 'GET' ? 'var(--accent)' : 'var(--text)';
+      return `<div class="check-row"><span class="label"><span style="color:${color};font-weight:600;font-size:11px">${method}</span> ${path}</span></div>`;
+    }).join('');
+  } catch(e) {}
+}
+
+function buildBody() {
+  const f = document.getElementById('validate-form');
+  const fd = new FormData(f);
+  return {
+    payer: { name: fd.get('payer_name'), tin: fd.get('payer_tin'), tin_type: 'EIN', address: fd.get('payer_address'), city: fd.get('payer_city'), state: fd.get('payer_state'), zip_code: fd.get('payer_zip'), phone: fd.get('payer_phone'), email: fd.get('payer_email'), business_type: 'LLC' },
+    recipient: { first_name: fd.get('recip_first'), last_name: fd.get('recip_last'), tin: fd.get('recip_tin'), tin_type: fd.get('recip_tin_type'), address: fd.get('recip_address'), city: fd.get('recip_city'), state: fd.get('recip_state'), zip_code: fd.get('recip_zip') },
+    nonemployee_compensation: parseFloat(fd.get('amount')),
+    is_federal_tax_withheld: false,
+    is_state_filing: false,
+    tax_year: fd.get('tax_year') || '2025'
+  };
+}
+
+function showResult(id, data, isError) {
+  const el = document.getElementById(id);
+  const cls = isError ? 'error' : (data.success === false ? 'error' : 'success');
+  el.innerHTML = `<div class="result ${cls}">${JSON.stringify(data, null, 2)}</div>`;
+}
+
+async function handleValidate(e) {
+  e.preventDefault();
+  const btn = document.getElementById('validate-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Validating...';
+  try {
+    const res = await fetch(API + '/validate', { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(buildBody()) });
+    const data = await res.json();
+    showResult('validate-result', data, !res.ok);
+  } catch(e) { showResult('validate-result', { error: e.message }, true); }
+  btn.disabled = false; btn.textContent = 'Validate with AI';
+  return false;
+}
+
+async function handleFile() {
+  const btn = document.getElementById('file-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Filing...';
+  try {
+    const res = await fetch(API + '/file', { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(buildBody()) });
+    const data = await res.json();
+    showResult('file-result', data, !res.ok);
+    if (data.success && data.data?.filing?.SubmissionId) {
+      lastSubmissionId = data.data.filing.SubmissionId;
+      document.getElementById('transmit-btn').disabled = false;
+      document.getElementById('status-btn').disabled = false;
+    }
+  } catch(e) { showResult('file-result', { error: e.message }, true); }
+  btn.disabled = false; btn.textContent = 'Create 1099-NEC';
+}
+
+async function handleTransmit() {
+  if (!lastSubmissionId) return;
+  const btn = document.getElementById('transmit-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Transmitting...';
+  try {
+    const res = await fetch(API + '/transmit/' + lastSubmissionId, { method: 'POST', headers: authHeaders() });
+    const data = await res.json();
+    showResult('file-result', data, !res.ok);
+  } catch(e) { showResult('file-result', { error: e.message }, true); }
+  btn.disabled = false; btn.textContent = 'Transmit to IRS';
+}
+
+async function handleStatus() {
+  if (!lastSubmissionId) return;
+  const btn = document.getElementById('status-btn');
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Checking...';
+  try {
+    const res = await fetch(API + '/status/' + lastSubmissionId, { method: 'GET', headers: authHeaders() });
+    const data = await res.json();
+    showResult('file-result', data, !res.ok);
+  } catch(e) { showResult('file-result', { error: e.message }, true); }
+  btn.disabled = false; btn.textContent = 'Check Status';
+}
+
+async function loadSubmissions() {
+  const el = document.getElementById('submissions-list');
+  el.innerHTML = '<div class="empty-state"><span class="spinner"></span> Loading...</div>';
+  try {
+    const res = await fetch(API + '/webhook/submissions', { headers: authHeaders() });
+    const data = await res.json();
+    if (!data.success || !data.data?.length) {
+      el.innerHTML = '<div class="empty-state">No submissions tracked yet. File a 1099-NEC to get started.</div>';
+      return;
+    }
+    el.innerHTML = `<table class="submissions-table"><thead><tr><th>Submission ID</th><th>Status</th><th>Form</th><th>Updated</th></tr></thead><tbody>` +
+      data.data.map(s => {
+        const cls = s.status.toLowerCase();
+        return `<tr><td style="font-family:monospace;font-size:12px">${s.submissionId.slice(0,8)}…</td><td><span class="status-pill ${cls}">${s.status}</span></td><td>${s.formType}</td><td>${s.updatedAt}</td></tr>`;
+      }).join('') + '</tbody></table>';
+  } catch(e) { el.innerHTML = `<div class="empty-state" style="color:var(--red)">${e.message}</div>`; }
+}
+
+function fillSample() {
+  const f = document.getElementById('validate-form');
+  f.payer_name.value='Acme Corp'; f.payer_tin.value='27-1234567'; f.payer_address.value='100 Main St';
+  f.payer_city.value='New York'; f.payer_state.value='NY'; f.payer_zip.value='10001';
+  f.payer_phone.value='2125551234'; f.payer_email.value='payroll@acme.com';
+  f.recip_first.value='Jane'; f.recip_last.value='Smith'; f.recip_tin.value='412789654';
+  f.recip_tin_type.value='SSN'; f.recip_address.value='200 Oak Ave'; f.recip_city.value='Austin';
+  f.recip_state.value='TX'; f.recip_zip.value='78701'; f.amount.value='5000.00'; f.tax_year.value='2025';
+}
+
+// E2E Test Suite
+async function runE2E() {
+  const results = [];
+  const el = document.getElementById('e2e-results');
+  el.innerHTML = '<div style="color:var(--muted)"><span class="spinner"></span> Running E2E tests...</div>';
+  const key = getKey();
+
+  async function test(name, fn) {
+    try {
+      const start = performance.now();
+      const result = await fn();
+      const ms = Math.round(performance.now() - start);
+      results.push({ name, pass: true, ms, detail: result });
+    } catch(e) {
+      results.push({ name, pass: false, ms: 0, detail: e.message });
+    }
+  }
+
+  await test('GET / returns API overview', async () => {
+    const res = await fetch(API + '/');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    if (!d.endpoints) throw new Error('missing endpoints');
+    return Object.keys(d.endpoints).length + ' endpoints';
+  });
+
+  await test('GET /health returns healthy', async () => {
+    const res = await fetch(API + '/health');
+    const d = await res.json();
+    if (!d.healthy) throw new Error('not healthy: ' + JSON.stringify(d.checks));
+    return 'all checks pass';
+  });
+
+  await test('GET /openapi.json returns spec', async () => {
+    const res = await fetch(API + '/openapi.json');
+    const d = await res.json();
+    if (!d.openapi) throw new Error('missing openapi field');
+    return 'OpenAPI ' + d.openapi;
+  });
+
+  await test('POST /validate rejects empty body', async () => {
+    const res = await fetch(API + '/validate', { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: '{}' });
+    if (res.status !== 400) throw new Error('expected 400, got ' + res.status);
+    return 'got 400';
+  });
+
+  await test('POST /validate with valid data returns AI result', async () => {
+    const res = await fetch(API + '/validate', { method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(buildBody()) });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    if (!d.success) throw new Error('validation failed: ' + JSON.stringify(d));
+    if (!d.data.ai_model.includes('glm')) throw new Error('wrong model: ' + d.data.ai_model);
+    return d.data.ai_model + ' — valid=' + d.data.valid;
+  });
+
+  await test('POST /validate without auth returns 401', async () => {
+    const res = await fetch(API + '/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(buildBody()) });
+    if (res.status !== 401) throw new Error('expected 401, got ' + res.status);
+    return 'got 401';
+  });
+
+  await test('POST /transmit rejects bad UUID', async () => {
+    const res = await fetch(API + '/transmit/not-a-uuid', { method: 'POST', headers: authHeaders() });
+    if (res.status !== 400) throw new Error('expected 400, got ' + res.status);
+    return 'got 400';
+  });
+
+  await test('GET /status rejects bad UUID', async () => {
+    const res = await fetch(API + '/status/not-a-uuid', { headers: authHeaders() });
+    if (res.status !== 400) throw new Error('expected 400, got ' + res.status);
+    return 'got 400';
+  });
+
+  await test('GET /webhook/submissions returns list', async () => {
+    const res = await fetch(API + '/webhook/submissions', { headers: authHeaders() });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const d = await res.json();
+    if (!d.success) throw new Error('failed');
+    return (d.data?.length ?? 0) + ' submissions';
+  });
+
+  await test('GET /nonexistent returns 404', async () => {
+    const res = await fetch(API + '/nonexistent');
+    if (res.status !== 404) throw new Error('expected 404, got ' + res.status);
+    return 'got 404';
+  });
+
+  const passed = results.filter(r => r.pass).length;
+  const failed = results.filter(r => !r.pass).length;
+  const totalMs = results.reduce((a, r) => a + r.ms, 0);
+
+  el.innerHTML = `<div style="margin-bottom:12px"><span class="stat ${failed === 0 ? 'green' : 'red'}" style="font-size:20px">${passed}/${results.length} passed</span> <span style="color:var(--muted);font-size:13px">(${totalMs}ms)</span></div>` +
+    results.map(r => {
+      const icon = r.pass ? '✅' : '❌';
+      const color = r.pass ? 'var(--accent)' : 'var(--red)';
+      return `<div class="check-row"><span class="label">${icon} ${r.name}</span><span class="value" style="color:${color};font-size:12px">${r.pass ? r.detail + ' (' + r.ms + 'ms)' : r.detail}</span></div>`;
+    }).join('');
+}
+
+// Init
+document.getElementById('api-key').value = localStorage.getItem('tax-agent-key') || '';
+checkHealth();
+loadEndpoints();
+setInterval(checkHealth, 30000);
+</script>
+</body>
+</html>
