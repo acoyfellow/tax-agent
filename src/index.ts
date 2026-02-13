@@ -14,7 +14,7 @@ import type {
   TaxBanditsTransmitResponse,
   TaxBanditsStatusResponse,
 } from './types';
-import { validateForm } from './agent';
+import { validateForm, runStructuralValidations } from './agent';
 import { openApiSpec } from './openapi';
 import {
   create1099NEC,
@@ -133,6 +133,24 @@ async function parseBody(c: { req: { json: () => Promise<unknown> } }) {
   return Form1099NECSchema.safeParse(raw);
 }
 
+/** Build a fallback ValidationResult when AI is unavailable, preserving structural issues. */
+function aiFallbackResult(data: Form1099NECRequest, errMessage: string): ValidationResult {
+  const structuralIssues = runStructuralValidations(data);
+  return {
+    valid: false,
+    issues: [
+      ...structuralIssues,
+      {
+        field: 'ai_validation',
+        message: `AI review unavailable: ${errMessage}. Retry later.`,
+        severity: 'error',
+      },
+    ],
+    summary: 'AI validation failed — cannot proceed without semantic review',
+    ai_model: '@cf/meta/llama-3.1-8b-instruct-fp8 (failed)',
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
@@ -193,20 +211,10 @@ app.post('/validate', async (c) => {
     );
   }
 
-  const program = validateForm(c.env, parsed.data as Form1099NECRequest).pipe(
+  const formData = parsed.data as Form1099NECRequest;
+  const program = validateForm(c.env, formData).pipe(
     Effect.catchTag('AIValidationError', (err) =>
-      Effect.succeed<ValidationResult>({
-        valid: false,
-        issues: [
-          {
-            field: 'ai_validation',
-            message: `AI review unavailable: ${err.message}. Retry later.`,
-            severity: 'error',
-          },
-        ],
-        summary: 'AI validation failed — cannot proceed without semantic review',
-        ai_model: '@cf/meta/llama-3.1-8b-instruct-fp8 (failed)',
-      }),
+      Effect.succeed(aiFallbackResult(formData, err.message)),
     ),
   );
   const result = await Effect.runPromise(program);
@@ -242,18 +250,7 @@ app.post('/file', async (c) => {
 
   const validationProgram = validateForm(c.env, body).pipe(
     Effect.catchTag('AIValidationError', (err) =>
-      Effect.succeed<ValidationResult>({
-        valid: false,
-        issues: [
-          {
-            field: 'ai_validation',
-            message: `AI review unavailable: ${err.message}. Retry later.`,
-            severity: 'error',
-          },
-        ],
-        summary: 'AI validation failed — cannot proceed without semantic review',
-        ai_model: '@cf/meta/llama-3.1-8b-instruct-fp8 (failed)',
-      }),
+      Effect.succeed(aiFallbackResult(body, err.message)),
     ),
   );
   const validation = await Effect.runPromise(validationProgram);
@@ -325,18 +322,7 @@ app.post('/file/batch', async (c) => {
     (f) =>
       validateForm(c.env, f).pipe(
         Effect.catchTag('AIValidationError', (err) =>
-          Effect.succeed<ValidationResult>({
-            valid: false,
-            issues: [
-              {
-                field: 'ai_validation',
-                message: `AI review unavailable: ${err.message}. Retry later.`,
-                severity: 'error',
-              },
-            ],
-            summary: 'AI validation failed',
-            ai_model: '@cf/meta/llama-3.1-8b-instruct-fp8 (failed)',
-          }),
+          Effect.succeed(aiFallbackResult(f, err.message)),
         ),
       ),
     { concurrency: 'unbounded' },
