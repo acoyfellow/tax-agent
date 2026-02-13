@@ -15,6 +15,16 @@
   "kv_namespaces": [
     { "binding": "IDEMPOTENCY_KV", "id": "10996d65b02a411c82047a9f62fcc631" }
   ],
+  "ratelimits": [
+    {
+      "name": "RATE_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 20,
+        "period": 60
+      }
+    }
+  ],
   // Secrets (set via wrangler secret put):
   // TAXBANDITS_CLIENT_ID
   // TAXBANDITS_CLIENT_SECRET

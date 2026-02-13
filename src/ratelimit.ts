@@ -2,24 +2,21 @@ import type { Context, Next } from 'hono';
 import type { Env } from './types';
 
 // ---------------------------------------------------------------------------
-// In-memory sliding-window rate limiter (per-IP, POST-only)
+// Rate limiter middleware — Cloudflare native binding with in-memory fallback
 // ---------------------------------------------------------------------------
 
+// In-memory fallback for local dev / tests where the binding isn't available
 interface RateBucket {
   count: number;
-  resetAt: number; // epoch ms
+  resetAt: number;
 }
 
-/** Module-level map — persists across requests within one isolate. */
 const buckets = new Map<string, RateBucket>();
-
-const WINDOW_MS = 60_000; // 1 minute
-const MAX_REQUESTS = 20; // per window per IP
-const CLEANUP_INTERVAL_MS = 60_000; // purge stale entries every 60 s
-
+const WINDOW_MS = 60_000;
+const MAX_REQUESTS = 20;
+const CLEANUP_INTERVAL_MS = 60_000;
 let lastCleanup = Date.now();
 
-/** Remove entries whose window has expired so the Map doesn't grow forever. */
 function cleanupStaleEntries(): void {
   const now = Date.now();
   if (now - lastCleanup < CLEANUP_INTERVAL_MS) return;
@@ -31,45 +28,63 @@ function cleanupStaleEntries(): void {
   }
 }
 
+/** In-memory sliding window — used when RATE_LIMITER binding is unavailable. */
+function inMemoryLimit(key: string): { success: boolean } {
+  cleanupStaleEntries();
+  const now = Date.now();
+  let bucket = buckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    bucket = { count: 1, resetAt: now + WINDOW_MS };
+    buckets.set(key, bucket);
+    return { success: true };
+  }
+  bucket.count += 1;
+  return { success: bucket.count <= MAX_REQUESTS };
+}
+
+/** Exported for testing — reset in-memory state between tests. */
+export function resetBuckets(): void {
+  buckets.clear();
+  lastCleanup = Date.now();
+}
+
 /**
- * Hono middleware that rate-limits requests.
- * Attach it to POST routes only — GET endpoints are unlimited.
+ * Hono middleware that rate-limits POST requests.
+ *
+ * Uses Cloudflare's native rate limit binding (env.RATE_LIMITER) when available,
+ * falls back to in-memory sliding window for local dev / tests.
  */
 export function rateLimiter() {
   return async (c: Context<{ Bindings: Env }>, next: Next): Promise<Response | void> => {
-    cleanupStaleEntries();
-
     const ip = c.req.header('cf-connecting-ip');
-    // No cf-connecting-ip means we're not behind Cloudflare (local dev/tests)
+    // No IP = local dev / tests without cf-connecting-ip header → skip
     if (!ip) {
       await next();
       return;
     }
-    const now = Date.now();
 
-    let bucket = buckets.get(ip);
+    const limiter = c.env.RATE_LIMITER;
+    let allowed: boolean;
 
-    // First request or window expired → start fresh window.
-    if (!bucket || bucket.resetAt <= now) {
-      bucket = { count: 1, resetAt: now + WINDOW_MS };
-      buckets.set(ip, bucket);
-      await next();
-      return;
+    if (limiter) {
+      // Cloudflare native rate limit binding
+      const outcome = await limiter.limit({ key: ip });
+      allowed = outcome.success;
+    } else {
+      // In-memory fallback
+      const outcome = inMemoryLimit(ip);
+      allowed = outcome.success;
     }
 
-    // Within active window — increment.
-    bucket.count += 1;
-
-    if (bucket.count > MAX_REQUESTS) {
-      const retryAfterSec = Math.ceil((bucket.resetAt - now) / 1000);
+    if (!allowed) {
       return c.json(
         {
           success: false,
-          error: `Rate limit exceeded. Try again in ${retryAfterSec} seconds.`,
+          error: 'Rate limit exceeded. Try again in 60 seconds.',
         },
         {
           status: 429,
-          headers: { 'Retry-After': String(retryAfterSec) },
+          headers: { 'Retry-After': '60' },
         },
       );
     }

@@ -2,6 +2,15 @@
 // Cloudflare Worker Environment
 // ============================================================
 
+/** Cloudflare Rate Limiting binding — returned by env.RATE_LIMITER.limit() */
+export interface RateLimitOutcome {
+  success: boolean;
+}
+
+export interface RateLimiter {
+  limit(options: { key: string }): Promise<RateLimitOutcome>;
+}
+
 export interface Env {
   AI: Ai;
   TAXBANDITS_CLIENT_ID: string;
@@ -10,6 +19,7 @@ export interface Env {
   TAXBANDITS_ENV: 'sandbox' | 'production';
   TAX_AGENT_API_KEY?: string; // optional: if set, all mutating routes require Bearer auth
   IDEMPOTENCY_KV?: KVNamespace; // optional: enables idempotency on POST /file
+  RATE_LIMITER?: RateLimiter; // Cloudflare native rate limit binding
 }
 
 // ============================================================
