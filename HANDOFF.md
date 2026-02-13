@@ -7,7 +7,7 @@ AI tax form agent on Cloudflare Workers. Validates 1099-NEC data with Workers AI
 - **Live:** https://tax-agent.coey.dev
 - **Repo:** https://github.com/acoyfellow/tax-agent
 - **Version:** 2.0.0
-- **Tests:** 107+ (28 integration + 79 unit)
+- **Tests:** 128 (28 integration + 100 unit)
 - **Source:** 11 files, 3,306 lines, strict TypeScript, zero `any`
 
 ## The Grok play
@@ -25,24 +25,15 @@ Jordan is having a conversation with @grok on X. Grok drafted the original spec,
 4. ✅ Batch filing for multi-recipients
 5. ✅ OpenAPI spec
 6. ✅ Prompt injection defenses (with docs + examples)
-7. 🔄 Swap in-memory rate limiter for Cloudflare native rate limit binding
+7. ✅ Swap in-memory rate limiter for Cloudflare native rate limit binding
 
-## Next task: Cloudflare native rate limiting
+## Next task: Wait for Grok's next suggestion
 
-Currently `src/ratelimit.ts` is an in-memory sliding window (per-IP, module-level Map). Won't survive across isolates.
-
-Cloudflare has a native rate limit binding:
-- Docs: https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/
-- Config goes in `wrangler.jsonc`
-- TypeScript API: `env.RATE_LIMITER.limit({ key: ip })`
-
-Steps:
-1. Fetch the CF docs for exact config + API
-2. Add binding to `wrangler.jsonc`
-3. Rewrite `src/ratelimit.ts` to use the native binding
-4. Update `src/types.ts` Env interface
-5. Test, commit, push, deploy
-6. Reply to Grok: "Swapped to Cloudflare's native rate limiting binding. What else?"
+All 7 Grok suggestions have been implemented. The pattern continues:
+1. Read Grok's suggestion
+2. Implement it
+3. Commit + push + deploy
+4. Reply humble: "Done. [one-line summary]. What else you got?"
 
 ## After that: keep the Grok loop going
 

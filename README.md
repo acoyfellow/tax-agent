@@ -118,7 +118,7 @@ The three-step flow (create → transmit → poll status) mirrors TaxBandits' ow
 
 All responses: `{ success: boolean, data?, error?, details? }`
 
-Amounts are in **dollars** (e.g., `5000.00`). POST endpoints are rate-limited to 20 requests/minute per IP.
+Amounts are in **dollars** (e.g., `5000.00`). POST endpoints are rate-limited to 20 requests/minute per IP via [Cloudflare's native rate limit binding](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/).
 
 ## Project structure
 
@@ -132,7 +132,8 @@ src/
 ├── taxbandits.test.ts # 37 unit tests (crypto, request building)
 ├── pii.ts             # TIN masking and scrubbing
 ├── pii.test.ts        # 11 PII tests
-├── ratelimit.ts       # Per-IP rate limiter (20 req/min on POST)
+├── ratelimit.ts       # Cloudflare native rate limit binding (20 req/min, in-memory fallback)
+├── ratelimit.test.ts  # 10 rate limiter tests
 ├── openapi.ts         # OpenAPI 3.1 spec
 └── types.ts           # All TypeScript types
 ```
