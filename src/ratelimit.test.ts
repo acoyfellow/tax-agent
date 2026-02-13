@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Hono } from 'hono';
-import type { Env, RateLimiter } from './types';
+import type { Env } from './types';
 import { rateLimiter, resetBuckets } from './ratelimit';
 
 // ---------------------------------------------------------------------------
@@ -27,10 +27,10 @@ function postRequest(ip?: string): Request {
 }
 
 /** Mock Cloudflare rate limiter binding */
-function createMockLimiter(responses: boolean[]): RateLimiter {
+function createMockLimiter(responses: boolean[]): RateLimit {
   let callIndex = 0;
   return {
-    async limit(_opts: { key: string }) {
+    async limit(_opts: RateLimitOptions) {
       const idx = callIndex++;
       const val = idx < responses.length ? responses[idx] : undefined;
       return { success: val ?? false };
@@ -134,7 +134,7 @@ describe('rateLimiter', () => {
 
     it('passes IP as key to the binding', async () => {
       let capturedKey = '';
-      const limiter: RateLimiter = {
+      const limiter: RateLimit = {
         async limit(opts: { key: string }) {
           capturedKey = opts.key;
           return { success: true };
