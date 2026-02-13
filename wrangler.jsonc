@@ -11,7 +11,7 @@
   },
   "vars": {
     "TAXBANDITS_ENV": "sandbox"
-  }
+  },
   "kv_namespaces": [
     { "binding": "IDEMPOTENCY_KV", "id": "10996d65b02a411c82047a9f62fcc631" }
   ],
