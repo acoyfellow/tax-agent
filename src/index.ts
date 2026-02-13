@@ -29,6 +29,7 @@ import { auditLogger } from './audit';
 import { verifyWebhookSignature, parseWebhookPayload } from './webhook';
 import { createAuth, verifyApiKey, getRequiredPermissions, migrateAuthDb } from './auth';
 import { generateFromQB, fetchVendors, getValidToken, type QBGenerateInput } from './quickbooks';
+import { csvToForms } from './csv';
 
 // ---------------------------------------------------------------------------
 // Zod schemas — runtime validation for POST bodies
@@ -116,6 +117,7 @@ const PROTECTED_ROUTES = [
   '/validate',
   '/file',
   '/file/batch',
+  '/file/csv',
   '/transmit',
   '/status',
   '/webhook/submissions',
@@ -574,6 +576,61 @@ app.get('/status/:submissionId', async (c) => {
 });
 
 /** GET /openapi.json — OpenAPI 3.1 specification. */
+// ---------------------------------------------------------------------------
+// CSV import
+// ---------------------------------------------------------------------------
+
+/** POST /file/csv — Upload CSV, validate each row, return Form1099NECRequest[]. */
+app.post('/file/csv', async (c) => {
+  const contentType = c.req.header('content-type') ?? '';
+  let csvText: string;
+  let defaultPayer: Form1099NECRequest['payer'] | undefined;
+
+  if (contentType.includes('multipart/form-data')) {
+    const formData = await c.req.formData();
+    const file = formData.get('file');
+    if (!file || typeof file === 'string') {
+      return c.json({ success: false, error: 'Missing file field in multipart form' }, 400);
+    }
+    csvText = await file.text();
+    const payerJson = formData.get('payer');
+    if (payerJson && typeof payerJson === 'string') {
+      defaultPayer = JSON.parse(payerJson) as Form1099NECRequest['payer'];
+    }
+  } else {
+    const body = await c.req.json<{ csv: string; payer?: Form1099NECRequest['payer'] }>();
+    if (!body.csv) {
+      return c.json({ success: false, error: 'Missing csv field in request body' }, 400);
+    }
+    csvText = body.csv;
+    defaultPayer = body.payer;
+  }
+
+  const result = csvToForms(csvText, defaultPayer);
+
+  if (result.forms.length === 0) {
+    return c.json(
+      {
+        success: false,
+        error: 'No valid forms parsed from CSV',
+        details: { errors: result.errors, totalRows: result.totalRows },
+      },
+      422,
+    );
+  }
+
+  return c.json({
+    success: true,
+    data: {
+      forms: result.forms,
+      errors: result.errors,
+      parsed: result.forms.length,
+      failed: result.errors.length,
+      totalRows: result.totalRows,
+    },
+  });
+});
+
 // ---------------------------------------------------------------------------
 // QuickBooks integration
 // ---------------------------------------------------------------------------

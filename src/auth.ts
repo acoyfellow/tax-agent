@@ -94,6 +94,7 @@ const ROUTE_PERMISSIONS: Record<string, Record<string, string[]>> = {
   '/validate': { filings: ['validate'] },
   '/file': { filings: ['create'] },
   '/file/batch': { filings: ['create'] },
+  '/file/csv': { filings: ['create'] },
   '/transmit': { filings: ['transmit'] },
   '/status': { status: ['read'] },
   '/webhook/submissions': { webhooks: ['read'] },
