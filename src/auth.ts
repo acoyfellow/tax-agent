@@ -1,5 +1,5 @@
 import { betterAuth } from 'better-auth';
-import { apiKey } from 'better-auth/plugins';
+import { apiKey, genericOAuth } from 'better-auth/plugins';
 import { D1Dialect } from 'kysely-d1';
 import { Kysely } from 'kysely';
 import type { Env } from './types';
@@ -45,6 +45,43 @@ export function createAuth(env: Env) {
           defaultPermissions: DEFAULT_PERMISSIONS,
         },
       }),
+      // QuickBooks OAuth — only registered when QB credentials are present
+      ...(env.QB_CLIENT_ID && env.QB_CLIENT_SECRET
+        ? [
+            genericOAuth({
+              config: [
+                {
+                  providerId: 'quickbooks',
+                  clientId: env.QB_CLIENT_ID,
+                  clientSecret: env.QB_CLIENT_SECRET,
+                  authorizationUrl: 'https://appcenter.intuit.com/connect/oauth2',
+                  tokenUrl: 'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
+                  scopes: ['com.intuit.quickbooks.accounting'],
+                  getUserInfo: async (tokens) => {
+                    // QB userinfo endpoint to get email for account linking
+                    const res = await fetch(
+                      'https://accounts.platform.intuit.com/v1/openid_connect/userinfo',
+                      { headers: { Authorization: `Bearer ${tokens.accessToken}` } },
+                    );
+                    if (!res.ok) {
+                      return { id: 'qb-user', email: '', emailVerified: false };
+                    }
+                    const info = (await res.json()) as {
+                      sub: string;
+                      email?: string;
+                      emailVerified?: boolean;
+                    };
+                    return {
+                      id: info.sub,
+                      email: info.email ?? '',
+                      emailVerified: info.emailVerified ?? false,
+                    };
+                  },
+                },
+              ],
+            }),
+          ]
+        : []),
     ],
   });
 }
@@ -60,6 +97,8 @@ const ROUTE_PERMISSIONS: Record<string, Record<string, string[]>> = {
   '/transmit': { filings: ['transmit'] },
   '/status': { status: ['read'] },
   '/webhook/submissions': { webhooks: ['read'] },
+  '/quickbooks/vendors': { filings: ['validate'] },
+  '/quickbooks/generate': { filings: ['create'] },
 };
 
 /** Resolve required permissions for a request path */

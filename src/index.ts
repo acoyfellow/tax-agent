@@ -28,6 +28,7 @@ import { scrubTINs } from './pii';
 import { auditLogger } from './audit';
 import { verifyWebhookSignature, parseWebhookPayload } from './webhook';
 import { createAuth, verifyApiKey, getRequiredPermissions, migrateAuthDb } from './auth';
+import { generateFromQB, fetchVendors, getValidToken, type QBGenerateInput } from './quickbooks';
 
 // ---------------------------------------------------------------------------
 // Zod schemas — runtime validation for POST bodies
@@ -95,7 +96,7 @@ const SubmissionIdSchema = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, 'Must be a UUID');
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: { apiKeyId?: string; userId?: string } }>();
 
 // ---------------------------------------------------------------------------
 // Middleware
@@ -118,6 +119,8 @@ const PROTECTED_ROUTES = [
   '/transmit',
   '/status',
   '/webhook/submissions',
+  '/quickbooks/vendors',
+  '/quickbooks/generate',
 ];
 
 for (const route of PROTECTED_ROUTES) {
@@ -571,6 +574,87 @@ app.get('/status/:submissionId', async (c) => {
 });
 
 /** GET /openapi.json — OpenAPI 3.1 specification. */
+// ---------------------------------------------------------------------------
+// QuickBooks integration
+// ---------------------------------------------------------------------------
+
+/** GET /quickbooks/vendors — List 1099-flagged vendors from connected QuickBooks. */
+app.get('/quickbooks/vendors', async (c) => {
+  const userId = c.get('userId') as string | undefined;
+  if (!userId)
+    return c.json({ success: false, error: 'User context required (use x-api-key)' }, 401);
+  if (!c.env.AUTH_DB || !c.env.QB_CLIENT_ID) {
+    return c.json({ success: false, error: 'QuickBooks not configured' }, 503);
+  }
+
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const tokens = yield* getValidToken(c.env, userId);
+      return yield* fetchVendors(c.env, tokens);
+    }).pipe(
+      Effect.catchTag('QBAuthError', (e) =>
+        Effect.fail({ status: 401 as const, error: e.message }),
+      ),
+      Effect.catchTag('QBTransientError', (e) =>
+        Effect.fail({ status: 502 as const, error: e.message }),
+      ),
+    ),
+  ).catch((e: { status: number; error: string }) => e);
+
+  if ('status' in result && 'error' in result) {
+    return c.json({ success: false, error: result.error }, result.status as 401 | 502);
+  }
+  return c.json({ success: true, data: { vendors: result, count: result.length } });
+});
+
+/** POST /quickbooks/generate — Pull QB data and generate 1099-NEC forms. */
+app.post('/quickbooks/generate', async (c) => {
+  const userId = c.get('userId') as string | undefined;
+  if (!userId)
+    return c.json({ success: false, error: 'User context required (use x-api-key)' }, 401);
+  if (!c.env.AUTH_DB || !c.env.QB_CLIENT_ID) {
+    return c.json({ success: false, error: 'QuickBooks not configured' }, 503);
+  }
+
+  const body = await c.req.json<{
+    payer: Form1099NECRequest['payer'];
+    taxYear?: string;
+    vendorTins: Record<string, string>;
+    threshold?: number;
+  }>();
+
+  if (!body.payer || !body.vendorTins) {
+    return c.json({ success: false, error: 'payer and vendorTins are required' }, 400);
+  }
+
+  const input: QBGenerateInput = {
+    userId,
+    payer: body.payer,
+    taxYear: body.taxYear ?? new Date().getFullYear().toString(),
+    vendorTins: body.vendorTins,
+    threshold: body.threshold,
+  };
+
+  const result = await Effect.runPromise(
+    generateFromQB(c.env, input).pipe(
+      Effect.catchTag('QBAuthError', (e) =>
+        Effect.fail({ status: 401 as const, error: e.message }),
+      ),
+      Effect.catchTag('QBTransientError', (e) =>
+        Effect.fail({ status: 502 as const, error: e.message }),
+      ),
+      Effect.catchTag('QBBusinessError', (e) =>
+        Effect.fail({ status: 422 as const, error: e.message }),
+      ),
+    ),
+  ).catch((e: { status: number; error: string }) => e);
+
+  if ('status' in result && 'error' in result) {
+    return c.json({ success: false, error: result.error }, result.status as 401 | 502 | 422);
+  }
+  return c.json({ success: true, data: result });
+});
+
 app.get('/openapi.json', (c) => c.json(openApiSpec));
 
 /** POST /webhook/status — TaxBandits e-file status webhook callback */

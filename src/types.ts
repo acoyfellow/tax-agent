@@ -20,6 +20,9 @@ export interface Env {
   AUTH_DB?: D1Database; // D1 database for better-auth (users, API keys, sessions)
   BETTER_AUTH_SECRET?: string; // signing secret for sessions/tokens
   BETTER_AUTH_URL?: string; // base URL (e.g., https://tax-agent.coey.dev)
+  // QuickBooks OAuth
+  QB_CLIENT_ID?: string;
+  QB_CLIENT_SECRET?: string;
 }
 
 // ============================================================
